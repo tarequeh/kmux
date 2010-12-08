@@ -87,7 +87,7 @@ ENTRY(save_syscall_environment)
     movl %esp, host_os_esp_storage
 
 	SAVE_ALL
-	jsr kmux_syscall_handler
+	call kmux_syscall_handler
 
 	RESTORE_REGS
 invoke_syscall:
