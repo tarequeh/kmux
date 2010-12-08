@@ -242,7 +242,7 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 			thread_register thread_info;
 			int is_registered = 0;
 
-			if (copy_from_user(&thread_info, (void*)arg, sizeof(struct thread_info))) {
+			if (copy_from_user(&thread_info, (void*)arg, sizeof(thread_register))) {
 				printk("Error copying thread information from user space.\n");
 				return -EFAULT;
 			}
@@ -255,7 +255,7 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 			thread_register thread_info;
 			int is_unregistered = 0;
 
-			if (copy_from_user(&thread_info, (void*)arg, sizeof(struct thread_info))) {
+			if (copy_from_user(&thread_info, (void*)arg, sizeof(thread_register))) {
 				printk("Error copying thread information from user space.\n");
 				return -EFAULT;
 			}
