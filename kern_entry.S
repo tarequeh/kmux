@@ -85,6 +85,7 @@ ALIGN
 ENTRY(save_syscall_environment)
     # Save host sysenter address
     movl %esp, host_os_esp_storage
+    movl TSS_sysenter_sp0(%esp),%esp
 
 	SAVE_ALL
 	call kmux_syscall_handler

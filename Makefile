@@ -12,7 +12,14 @@ all:
 	make -C $(KDIR) $(INCLUDE) SUBDIRS=$(PWD) modules
 
 clean:
+	make -i remove-module
+	make remove-files
+
+remove-files:
 	rm -rf *.ko *.mod.c *.o *.mod.o .*.cmd .tmp_versions modules.order Module.symvers
 
-build:
+remove-module:
+	rmmod kmux.ko
+
+install:
 	insmod kmux.ko
