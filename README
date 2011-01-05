@@ -1,0 +1,12 @@
+====
+kmux
+====
+
+Usage
+=====
+* Linux source code required. See makefile for location
+* Compile using make all
+* Make sure you have permission to load kernel module
+* To load module try: make install
+* To unload try: make remove-module
+* To start fresh: make clean
