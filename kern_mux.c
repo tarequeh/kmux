@@ -47,6 +47,7 @@ thread_register thread_register_container[MAX_THREAD_SUPPORT];
 
 // Store for host OS/ current syscall handler
 void *host_sysenter_addr, *kmux_sysenter_addr;
+int syscall_number;
 
 extern void save_syscall_environment(void);
 
@@ -173,8 +174,9 @@ int unregister_thread(char* kernel_name, unsigned int thread_id) {
 void kmux_syscall_handler(void) {
 	int index;
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
-
 	unsigned int group_thread_id = (unsigned int)task_pgrp(current);
+
+	printk("Current syscall number: %d\n", syscall_number);
 	printk("Group thread ID: %u\n", group_thread_id);
 
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++){
@@ -184,16 +186,16 @@ void kmux_syscall_handler(void) {
 		}
 	}
 
-	printk("Index: %d MAX_THREAD: %d\n", index, MAX_THREAD_SUPPORT);
+	//printk("Index: %d MAX_THREAD: %d\n", index, MAX_THREAD_SUPPORT);
 	if (index == MAX_THREAD_SUPPORT) {
 		// Thread not registered. Host OS will handle? Or should we return -EFAULT
 		strcpy(kernel_name, DEFAULT_KERNEL_NAME);
 	}
 
-	printk("Found matching kernel: %s\n", kernel_name);
+	//printk("Found matching kernel: %s\n", kernel_name);
 	for(index = 0; index < MAX_KERNEL_SUPPORT; index++){
 		if (strcmp(kernel_name, kernel_entry_container[index].kernel_name) == 0) {
-			printk("Retrieving kernel info at index: %d\n", index);
+			//printk("Retrieving kernel info at index: %d\n", index);
 			kmux_sysenter_addr = (void *)(kernel_entry_container[index].kernel_syscall_handler);
 		}
 	}
