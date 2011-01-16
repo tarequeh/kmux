@@ -20,6 +20,7 @@
 
 #define SUCCESS 0
 
+// Needs to be replaced with semaphore
 static int device_open = 0;
 
 /* Handler array definition */
@@ -42,12 +43,9 @@ struct thread_register {
 
 typedef struct thread_register thread_register;
 
+/* Variables global to kmux module (access protected via semaphore) */
 kernel_entry kernel_entry_container[MAX_KERNEL_SUPPORT];
 thread_register thread_register_container[MAX_THREAD_SUPPORT];
-
-// Store for host OS/ current syscall handler
-void *host_sysenter_addr, *kmux_sysenter_addr;
-int syscall_number;
 
 extern void save_syscall_environment(void);
 
@@ -171,12 +169,28 @@ int unregister_thread(char* kernel_name, unsigned int thread_id) {
 	return is_removed ? SUCCESS:-EFAULT;
 }
 
-void kmux_syscall_handler(void) {
+void* get_host_sysenter_address(void) {
 	int index;
+	char kernel_name[MAX_KERNEL_NAME_LENGTH];
+	void* host_sysenter_addr = NULL;
+
+	strcpy(kernel_name, DEFAULT_KERNEL_NAME);
+
+	for(index = 0; index < MAX_KERNEL_SUPPORT; index++){
+		if (strcmp(kernel_name, kernel_entry_container[index].kernel_name) == 0) {
+			host_sysenter_addr = (void *)(kernel_entry_container[index].kernel_syscall_handler);
+		}
+	}
+
+	return host_sysenter_addr;
+}
+
+void* kmux_syscall_handler(void) {
+	int index;
+	void *kmux_sysenter_addr = NULL;
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	unsigned int group_thread_id = (unsigned int)task_pgrp(current);
 
-	printk("Current syscall number: %d\n", syscall_number);
 	printk("Group thread ID: %u\n", group_thread_id);
 
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++){
@@ -199,25 +213,28 @@ void kmux_syscall_handler(void) {
 			kmux_sysenter_addr = (void *)(kernel_entry_container[index].kernel_syscall_handler);
 		}
 	}
+
+	return kmux_sysenter_addr;
 }
 
 /* ------------------------- */
 
 
 /* Syscall capture */
-void hw_int_init(void) {
+void* hw_int_init(void) {
+	void *host_sysenter_addr = NULL;
 	int se_addr, trash;
 	printk("Reading and saving default sysenter handler.\n");
 	rdmsr(MSR_IA32_SYSENTER_EIP, se_addr, trash);
 	host_sysenter_addr = (void*)se_addr;
+	return host_sysenter_addr;
 }
 
 void hw_int_override_sysenter(void *handler) {
 	wrmsr(MSR_IA32_SYSENTER_EIP, (int)handler, 0);
-	printk("Overriding sysenter handler: %p with %p\n", host_sysenter_addr, handler);
 }
 
-void hw_int_reset(void) {
+void hw_int_reset(void *host_sysenter_addr) {
 	wrmsr(MSR_IA32_SYSENTER_EIP, (int)host_sysenter_addr, 0);
 	printk("Restoring default sysenter handler.\n");
 }
@@ -314,15 +331,18 @@ static int make_kmux_proc(void) {
 
 /* Module initialization/ termination */
 static int kmux_init(void) {
+	void *host_sysenter_addr = NULL;
 	printk("Installing the Kernel Multiplexer module.\n");
 
 	if (make_kmux_proc()) {
 		return -1;
 	}
 
-	hw_int_init();
+	host_sysenter_addr = hw_int_init();
+
+	printk("Overriding sysenter handler: %p with %p\n", host_sysenter_addr, save_syscall_environment);
 	hw_int_override_sysenter(save_syscall_environment);
-	printk("Default syscall handler: %p\n", host_sysenter_addr);
+
 	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, NULL);
 
 	/*
@@ -345,8 +365,10 @@ static int kmux_init(void) {
 }
 
 static void kmux_exit(void) {
+	void *host_sysenter_addr = get_host_sysenter_address();
 	printk("Uninstalling the Kernel Multiplexer module.\n");
-	hw_int_reset();
+	printk("Retrieved host sysenter handler: %p\n", host_sysenter_addr);
+	hw_int_reset(host_sysenter_addr);
 	remove_proc_entry("kmux", NULL);
 
 	return;
