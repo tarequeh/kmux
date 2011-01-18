@@ -242,7 +242,6 @@ static int kmux_release(struct inode *inode, struct file *file)
 
 static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg) {
 	int ret = 0;
-	printk("Performing kmux ioctl. Command: %u\n", cmd);
 
 	switch(cmd) {
 		case KMUX_IOCTL_CMD_REGISTER_THREAD:
@@ -253,11 +252,11 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 			printk("Performing thread register ioctl.\n");
 			if (copy_from_user(&thread_info, (void*)arg, sizeof(thread_register))) {
 				printk("Error copying thread information from user space.\n");
-				return -EFAULT;
+				ret = -EFAULT;
 			}
 
 			is_registered = register_thread(thread_info.kernel_name, thread_info.thread_id);
-			return is_registered;
+			ret = is_registered;
 		}
 		case KMUX_IOCTL_CMD_UNREGISTER_THREAD:
 		{
@@ -267,12 +266,15 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 			printk("Performing thread unregister ioctl.\n");
 			if (copy_from_user(&thread_info, (void*)arg, sizeof(thread_register))) {
 				printk("Error copying thread information from user space.\n");
-				return -EFAULT;
+				ret = -EFAULT;
 			}
 
 			is_unregistered = unregister_thread(thread_info.kernel_name, thread_info.thread_id);
-			return is_unregistered;
+			ret = is_unregistered;
 		}
+		default:
+			printk("Invalid kmux ioctl command: %u\n", cmd);
+			ret = -EFAULT;
 	}
 
 	return ret;
