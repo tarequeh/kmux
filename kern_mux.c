@@ -1,3 +1,5 @@
+#include "kern_mux.h"
+
 #include <asm/desc.h>
 #include <asm/msr.h>
 #include <asm/uaccess.h>
@@ -9,39 +11,8 @@
 
 #define MODULE_NAME "kernel_multiplexer"
 
-#define MAX_KERNEL_SUPPORT 50
-#define MAX_THREAD_SUPPORT 1000
-#define MAX_KERNEL_NAME_LENGTH 50
-
-#define KMUX_REGISTER_THREAD 0
-#define KMUX_UNREGISTER_THREAD 1
-
-#define DEFAULT_KERNEL_NAME "linux"
-
-#define SUCCESS 0
-
 // Needs to be replaced with semaphore
 static int device_open = 0;
-
-/* Handler array definition */
-typedef int (*kmux_kernel_syscall_handler)(void);
-typedef int (*kmux_remove_handler)(void);
-
-/* Data structures */
-struct kernel_entry {
-	char kernel_name[MAX_KERNEL_NAME_LENGTH];
-	kmux_kernel_syscall_handler kernel_syscall_handler;
-	kmux_remove_handler kernel_removal_handler;
-};
-
-typedef struct kernel_entry kernel_entry;
-
-struct thread_register {
-	char kernel_name[MAX_KERNEL_NAME_LENGTH];
-	unsigned int thread_id;
-};
-
-typedef struct thread_register thread_register;
 
 /* Variables global to kmux module (access protected via semaphore) */
 kernel_entry kernel_entry_container[MAX_KERNEL_SUPPORT];
@@ -191,7 +162,7 @@ void* kmux_syscall_handler(void) {
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	unsigned int group_thread_id = (unsigned int)task_pgrp(current);
 
-	printk("Group thread ID: %u\n", group_thread_id);
+	//printk("Group thread ID: %u\n", group_thread_id);
 
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++){
 		if (thread_register_container[index].thread_id == group_thread_id) {
@@ -251,7 +222,7 @@ static int kmux_open(struct inode *inode, struct file *file)
 
 	try_module_get(THIS_MODULE);
 
-	printk("Successfully loaded proc device.\n");
+	printk("kmux proc opened.\n");
 
 	return SUCCESS;
 }
@@ -265,19 +236,21 @@ static int kmux_release(struct inode *inode, struct file *file)
 
 	module_put(THIS_MODULE);
 
-	printk("Successfully unloaded proc device.\n");
+	printk("kmux proc closed.\n");
 	return SUCCESS;
 }
 
 static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg) {
 	int ret = 0;
+	printk("Performing kmux ioctl. Command: %u\n", cmd);
 
 	switch(cmd) {
-		case KMUX_REGISTER_THREAD:
+		case KMUX_IOCTL_CMD_REGISTER_THREAD:
 		{
 			thread_register thread_info;
 			int is_registered = 0;
 
+			printk("Performing thread register ioctl.\n");
 			if (copy_from_user(&thread_info, (void*)arg, sizeof(thread_register))) {
 				printk("Error copying thread information from user space.\n");
 				return -EFAULT;
@@ -286,11 +259,12 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 			is_registered = register_thread(thread_info.kernel_name, thread_info.thread_id);
 			return is_registered;
 		}
-		case KMUX_UNREGISTER_THREAD:
+		case KMUX_IOCTL_CMD_UNREGISTER_THREAD:
 		{
 			thread_register thread_info;
 			int is_unregistered = 0;
 
+			printk("Performing thread unregister ioctl.\n");
 			if (copy_from_user(&thread_info, (void*)arg, sizeof(thread_register))) {
 				printk("Error copying thread information from user space.\n");
 				return -EFAULT;
@@ -314,9 +288,9 @@ static struct file_operations proc_kmux_fops = {
 static int make_kmux_proc(void) {
 	struct proc_dir_entry *ent;
 
-	ent = create_proc_entry("kmux", 0223, NULL);
+	ent = create_proc_entry(KMUX_PROC_NAME, KMUX_PROC_NUMBER, NULL);
 	if(ent == NULL){
-		printk("Failed to register /proc/kmux\n");
+		printk("Failed to register /proc/%s\n", KMUX_PROC_NAME);
 		return -1;
 	}
 
@@ -332,7 +306,7 @@ static int make_kmux_proc(void) {
 /* Module initialization/ termination */
 static int kmux_init(void) {
 	void *host_sysenter_addr = NULL;
-	printk("Installing the Kernel Multiplexer module.\n");
+	printk("Installing module: %s\n", MODULE_NAME);
 
 	if (make_kmux_proc()) {
 		return -1;
@@ -369,7 +343,7 @@ static void kmux_exit(void) {
 	printk("Uninstalling the Kernel Multiplexer module.\n");
 	printk("Retrieved host sysenter handler: %p\n", host_sysenter_addr);
 	hw_int_reset(host_sysenter_addr);
-	remove_proc_entry("kmux", NULL);
+	remove_proc_entry(KMUX_PROC_NAME, NULL);
 
 	return;
 }

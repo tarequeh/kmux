@@ -23,3 +23,4 @@ remove-module:
 
 install:
 	insmod kmux.ko
+	chmod 666 /proc/kmux
