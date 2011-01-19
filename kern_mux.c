@@ -244,7 +244,7 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 	int ret = 0;
 
 	switch(cmd) {
-		case KMUX_IOCTL_CMD_REGISTER_THREAD:
+		case KMUX_REGISTER_THREAD:
 		{
 			thread_register thread_info;
 			int is_registered = 0;
@@ -256,9 +256,9 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 			}
 
 			is_registered = register_thread(thread_info.kernel_name, thread_info.thread_id);
-			ret = is_registered;
+			return is_registered;
 		}
-		case KMUX_IOCTL_CMD_UNREGISTER_THREAD:
+		case KMUX_UNREGISTER_THREAD:
 		{
 			thread_register thread_info;
 			int is_unregistered = 0;
@@ -270,11 +270,11 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 			}
 
 			is_unregistered = unregister_thread(thread_info.kernel_name, thread_info.thread_id);
-			ret = is_unregistered;
+			return is_unregistered;
 		}
 		default:
 			printk("Invalid kmux ioctl command: %u\n", cmd);
-			ret = -EFAULT;
+			return -EFAULT;
 	}
 
 	return ret;
