@@ -20,9 +20,12 @@ thread_register thread_register_container[MAX_THREAD_SUPPORT];
 
 extern void save_syscall_environment(void);
 
+EXPORT_SYMBOL(register_kern_syscall_handler);
+EXPORT_SYMBOL(unregister_kern_syscall_handler);
+
 /* ------------------------- */
 
-int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_remove_handler removal_handler){
+int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_remove_handler removal_handler, int is_direct){
 	int index, is_spot_found;
 
 	printk("Adding handler: %p for kernel: %s\n", syscall_handler, kernel_name);
@@ -61,6 +64,7 @@ int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler
 		// Register handlers
 		kernel_entry_container[index].kernel_syscall_handler = syscall_handler;
 		kernel_entry_container[index].kernel_removal_handler = removal_handler;
+		kernel_entry_container[index].is_direct = is_direct;
 		return SUCCESS;
 	}
 }
@@ -83,6 +87,7 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 			memset(kernel_entry_container[index].kernel_name, MAX_KERNEL_NAME_LENGTH, 0);
 			kernel_entry_container[index].kernel_syscall_handler = NULL;
 			kernel_entry_container[index].kernel_removal_handler = NULL;
+			kernel_entry_container[index].is_direct = -1;
 			is_removed = 1;
 			break;
 		}
@@ -156,11 +161,11 @@ void* get_host_sysenter_address(void) {
 	return host_sysenter_addr;
 }
 
-void* kmux_syscall_handler(void) {
-	int index;
-	void *kmux_sysenter_addr = NULL;
+void* kmux_syscall_handler(struct pt_regs regs) {
+	int index, is_direct = 1;
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	unsigned int group_thread_id = (unsigned int)task_pgrp(current);
+	kmux_kernel_syscall_handler kmux_sysenter_handler = NULL;
 
 	//printk("Group thread ID: %u\n", group_thread_id);
 
@@ -181,11 +186,18 @@ void* kmux_syscall_handler(void) {
 	for(index = 0; index < MAX_KERNEL_SUPPORT; index++){
 		if (strcmp(kernel_name, kernel_entry_container[index].kernel_name) == 0) {
 			//printk("Retrieving kernel info at index: %d\n", index);
-			kmux_sysenter_addr = (void *)(kernel_entry_container[index].kernel_syscall_handler);
+			kmux_sysenter_handler = kernel_entry_container[index].kernel_syscall_handler;
+			is_direct = kernel_entry_container[index].is_direct;
+			break;
 		}
 	}
 
-	return kmux_sysenter_addr;
+	if (is_direct) {
+		return (void *)kmux_sysenter_handler;
+	} else {
+		(*kmux_sysenter_handler)(regs);
+		return get_host_sysenter_address();
+	}
 }
 
 /* ------------------------- */
@@ -319,7 +331,7 @@ static int kmux_init(void) {
 	printk("Overriding sysenter handler: %p with %p\n", host_sysenter_addr, save_syscall_environment);
 	hw_int_override_sysenter(save_syscall_environment);
 
-	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, NULL);
+	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, NULL, 1);
 
 	/*
 	// Test Code

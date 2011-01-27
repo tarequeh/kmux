@@ -1,3 +1,4 @@
+#include <asm/uaccess.h>
 #include <linux/ioctl.h>
 
 #define MAX_KERNEL_SUPPORT 50
@@ -18,14 +19,16 @@
 #define SUCCESS 0
 
 /* Handler array definition */
-typedef int (*kmux_kernel_syscall_handler)(void);
+typedef int (*kmux_kernel_syscall_handler)(struct pt_regs);
 typedef int (*kmux_remove_handler)(void);
 
 /* Data structures */
+// Direct kernel call doesn't return to host OS. Indirect kernel call returns control to host OS
 struct kernel_entry {
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	kmux_kernel_syscall_handler kernel_syscall_handler;
 	kmux_remove_handler kernel_removal_handler;
+	int is_direct;
 };
 
 typedef struct kernel_entry kernel_entry;
@@ -36,3 +39,6 @@ struct thread_register {
 };
 
 typedef struct thread_register thread_register;
+
+int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_remove_handler removal_handler, int is_direct);
+int unregister_kern_syscall_handler(char* kernel_name);

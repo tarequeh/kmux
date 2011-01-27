@@ -91,12 +91,10 @@ ENTRY(save_syscall_environment)
 	SAVE_ALL
 
     # Save stack position
-	push host_os_esp_storage
 	call kmux_syscall_handler
 
     # Return value contains destination kernel handler
 	mov %eax, kmux_sysenter_addr
-	pop host_os_esp_storage
 
 	RESTORE_REGS
 invoke_syscall:
