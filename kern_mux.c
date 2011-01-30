@@ -1,13 +1,14 @@
-#include "kern_mux.h"
-
 #include <asm/desc.h>
 #include <asm/msr.h>
 #include <asm/uaccess.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include<linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/string.h>
 #include <linux/sched.h>
+
+#include "kern_mux.h"
 
 #define MODULE_NAME "kernel_multiplexer"
 
@@ -19,9 +20,6 @@ kernel_entry kernel_entry_container[MAX_KERNEL_SUPPORT];
 thread_register thread_register_container[MAX_THREAD_SUPPORT];
 
 extern void save_syscall_environment(void);
-
-EXPORT_SYMBOL(register_kern_syscall_handler);
-EXPORT_SYMBOL(unregister_kern_syscall_handler);
 
 /* ------------------------- */
 
@@ -96,7 +94,7 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 	return is_removed ? SUCCESS:-EFAULT;
 }
 
-int register_thread(char* kernel_name, unsigned int thread_id) {
+static int register_thread(char* kernel_name, unsigned int thread_id) {
 	int index, is_inserted = 0;
 
 	// Basic check
@@ -120,7 +118,7 @@ int register_thread(char* kernel_name, unsigned int thread_id) {
 	return is_inserted ? SUCCESS:-EFAULT;
 }
 
-int unregister_thread(char* kernel_name, unsigned int thread_id) {
+static int unregister_thread(char* kernel_name, unsigned int thread_id) {
 	int index, is_removed;
 
 	// Basic check
@@ -145,7 +143,7 @@ int unregister_thread(char* kernel_name, unsigned int thread_id) {
 	return is_removed ? SUCCESS:-EFAULT;
 }
 
-void* get_host_sysenter_address(void) {
+static void* get_host_sysenter_address(void) {
 	int index;
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	void* host_sysenter_addr = NULL;
@@ -167,8 +165,6 @@ void* kmux_syscall_handler(struct pt_regs regs) {
 	unsigned int group_thread_id = (unsigned int)task_pgrp(current);
 	kmux_kernel_syscall_handler kmux_sysenter_handler = NULL;
 
-	//printk("Group thread ID: %u\n", group_thread_id);
-
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++){
 		if (thread_register_container[index].thread_id == group_thread_id) {
 			strcpy(kernel_name, thread_register_container[index].kernel_name);
@@ -176,13 +172,11 @@ void* kmux_syscall_handler(struct pt_regs regs) {
 		}
 	}
 
-	//printk("Index: %d MAX_THREAD: %d\n", index, MAX_THREAD_SUPPORT);
 	if (index == MAX_THREAD_SUPPORT) {
 		// Thread not registered. Host OS will handle? Or should we return -EFAULT
 		strcpy(kernel_name, DEFAULT_KERNEL_NAME);
 	}
 
-	//printk("Found matching kernel: %s\n", kernel_name);
 	for(index = 0; index < MAX_KERNEL_SUPPORT; index++){
 		if (strcmp(kernel_name, kernel_entry_container[index].kernel_name) == 0) {
 			//printk("Retrieving kernel info at index: %d\n", index);
@@ -204,7 +198,7 @@ void* kmux_syscall_handler(struct pt_regs regs) {
 
 
 /* Syscall capture */
-void* hw_int_init(void) {
+static void* hw_int_init(void) {
 	void *host_sysenter_addr = NULL;
 	int se_addr, trash;
 	printk("Reading and saving default sysenter handler.\n");
@@ -213,11 +207,11 @@ void* hw_int_init(void) {
 	return host_sysenter_addr;
 }
 
-void hw_int_override_sysenter(void *handler) {
+static void hw_int_override_sysenter(void *handler) {
 	wrmsr(MSR_IA32_SYSENTER_EIP, (int)handler, 0);
 }
 
-void hw_int_reset(void *host_sysenter_addr) {
+static void hw_int_reset(void *host_sysenter_addr) {
 	wrmsr(MSR_IA32_SYSENTER_EIP, (int)host_sysenter_addr, 0);
 	printk("Restoring default sysenter handler.\n");
 }
@@ -318,7 +312,7 @@ static int make_kmux_proc(void) {
 /* ------------------------- */
 
 /* Module initialization/ termination */
-static int kmux_init(void) {
+static int __init kmux_init(void) {
 	void *host_sysenter_addr = NULL;
 	printk("Installing module: %s\n", MODULE_NAME);
 
@@ -352,7 +346,7 @@ static int kmux_init(void) {
 	return 0;
 }
 
-static void kmux_exit(void) {
+static void __exit kmux_exit(void) {
 	void *host_sysenter_addr = get_host_sysenter_address();
 	printk("Uninstalling the Kernel Multiplexer module.\n");
 	printk("Retrieved host sysenter handler: %p\n", host_sysenter_addr);
@@ -369,3 +363,6 @@ module_exit(kmux_exit);
 MODULE_AUTHOR("Tareque Hossain");
 MODULE_DESCRIPTION("Kernel Multiplexer for Handling Sandboxed System Calls");
 MODULE_LICENSE("GPL");
+
+EXPORT_SYMBOL_GPL(register_kern_syscall_handler);
+EXPORT_SYMBOL_GPL(unregister_kern_syscall_handler);
