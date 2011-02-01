@@ -38,7 +38,7 @@ typedef struct kernel_entry kernel_entry;
 
 struct thread_register {
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
-	int tpgid;
+	int pgid;
 };
 
 typedef struct thread_register thread_register;

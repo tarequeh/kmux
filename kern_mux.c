@@ -96,9 +96,9 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 		for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
 			if (strcmp(kernel_name, thread_register_container[index].kernel_name) == 0) {
 				// Unregister thread
-				printk("Removing kernel info at index %d\n", index);
+				printk("Removing registered tgpid %d\n", thread_register_container[index].pgid);
 				memset(thread_register_container[index].kernel_name, MAX_KERNEL_NAME_LENGTH, 0);
-				thread_register_container[index].tpgid = 0;
+				thread_register_container[index].pgid = 0;
 			}
 		}
 	}
@@ -106,7 +106,7 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 	return is_removed ? SUCCESS:-EFAULT;
 }
 
-static int register_thread(char* kernel_name, int tpgid) {
+static int register_thread(char* kernel_name, int pgid) {
 	int index, is_inserted = 0;
 
 	// Basic check
@@ -115,13 +115,13 @@ static int register_thread(char* kernel_name, int tpgid) {
 	}
 
 	// Find empty spot
-	printk("Registering thread: %u with kernel: %s\n", tpgid, kernel_name);
+	printk("Registering thread: %u with kernel: %s\n", pgid, kernel_name);
 	for (index = 0; index < MAX_THREAD_SUPPORT; index++) {
 		if (strlen(thread_register_container[index].kernel_name) == 0) {
 			// Register thread
 			printk("Found thread registration spot at %d\n", index);
 			strcpy(thread_register_container[index].kernel_name, kernel_name);
-			thread_register_container[index].tpgid = tpgid;
+			thread_register_container[index].pgid = pgid;
 			is_inserted = 1;
 			break;
 		}
@@ -130,7 +130,7 @@ static int register_thread(char* kernel_name, int tpgid) {
 	return is_inserted ? SUCCESS:-EFAULT;
 }
 
-static int unregister_thread(char* kernel_name, int tpgid) {
+static int unregister_thread(char* kernel_name, int pgid) {
 	int index, is_removed;
 
 	// Basic check
@@ -140,13 +140,13 @@ static int unregister_thread(char* kernel_name, int tpgid) {
 
 	// Find token spot
 	is_removed = 0;
-	printk("De-registering thread: %u from kernel: %s\n", tpgid, kernel_name);
+	printk("De-registering thread: %u from kernel: %s\n", pgid, kernel_name);
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
 		if (strcmp(kernel_name, thread_register_container[index].kernel_name) == 0) {
 			// Unregister thread
 			printk("Removing kernel info at index %d\n", index);
 			memset(thread_register_container[index].kernel_name, MAX_KERNEL_NAME_LENGTH, 0);
-			thread_register_container[index].tpgid = 0;
+			thread_register_container[index].pgid = 0;
 			is_removed = 1;
 			break;
 		}
@@ -168,18 +168,18 @@ void* kmux_syscall_handler(struct pt_regs regs) {
 	int index, is_direct = 1;
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	struct pid *pid = task_pgrp(current);
-	int tpgid = pid->numbers[0].nr;
+	int pgid = pid->numbers[0].nr;
 
 	kmux_kernel_syscall_handler kmux_sysenter_handler = NULL;
 	void *host_sysenter_address = get_host_sysenter_address();
 
-	// If TPGID is -1 then its the host kernel's process group. Skip such processes.
-	if (tpgid != -1) {
+	// If PGID is 0 then its the host kernel's process group. Skip such processes.
+	if (pgid == 0) {
 		kmux_sysenter_handler = host_sysenter_address;
 		is_direct = 1;
 	} else {
 		for(index = 0; index < MAX_THREAD_SUPPORT; index++){
-			if (thread_register_container[index].tpgid == tpgid) {
+			if (thread_register_container[index].pgid == pgid) {
 				strcpy(kernel_name, thread_register_container[index].kernel_name);
 				break;
 			}
@@ -202,7 +202,7 @@ void* kmux_syscall_handler(struct pt_regs regs) {
 
 			if (index == MAX_KERNEL_SUPPORT) {
 				// Something went wrong, thread was registered but kernel not found
-				printk("Failed to locate kernel %s requested by thread %d", kernel_name, tpgid);
+				printk("Failed to locate kernel %s requested by thread %d", kernel_name, pgid);
 				kmux_sysenter_handler = host_sysenter_address;
 				is_direct = 1;
 			}
@@ -284,7 +284,7 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 				ret = -EFAULT;
 			}
 
-			is_registered = register_thread(thread_info.kernel_name, thread_info.tpgid);
+			is_registered = register_thread(thread_info.kernel_name, thread_info.pgid);
 			return is_registered;
 		}
 		case KMUX_UNREGISTER_THREAD:
@@ -298,7 +298,7 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 				ret = -EFAULT;
 			}
 
-			is_unregistered = unregister_thread(thread_info.kernel_name, thread_info.tpgid);
+			is_unregistered = unregister_thread(thread_info.kernel_name, thread_info.pgid);
 			return is_unregistered;
 		}
 		default:

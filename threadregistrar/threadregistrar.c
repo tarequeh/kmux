@@ -34,14 +34,14 @@ static int unregister_thread(int proc_desc, thread_register *thread_info) {
 int main(int argc, char *argv[]) {
 	char proc_path[50], kernel_name[MAX_KERNEL_NAME_LENGTH];
 	int kmux_command, proc_desc, ret_val;
-	int tpgid;
+	int pgid;
 	thread_register *thread_info = (thread_register*)malloc(sizeof(thread_register));
 
 	ret_val = sprintf(proc_path, "/proc/%s", KMUX_PROC_NAME);
 
 	// Sanitize input
 	if (argc != 4) {
-		printf("Usage: threadregistrar command kernel_name, tpgid");
+		printf("Usage: threadregistrar command kernel_name, pgid");
 		exit(-1);
 	}
 
@@ -63,18 +63,18 @@ int main(int argc, char *argv[]) {
 		strcpy(kernel_name, argv[2]);
 	}
 
-	tpgid = atol(argv[3]);
-	if (!tpgid) {
+	pgid = atol(argv[3]);
+	if (!pgid) {
 		printf("Invalid thread ID: %s", argv[3]);
 		exit(-1);
 	}
 
 	printf("kmux command: %d\n", kmux_command);
 	printf("Kernel name: %s\n", kernel_name);
-	printf("TPGID: %d\n", tpgid);
+	printf("PGID: %d\n", pgid);
 
 	strcpy(thread_info->kernel_name, kernel_name);
-	thread_info->tpgid = tpgid;
+	thread_info->pgid = pgid;
 
 	proc_desc = open(proc_path, O_RDONLY);
 	if (proc_desc < 0) {
