@@ -12,7 +12,7 @@ extern int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_
 extern int unregister_kern_syscall_handler(char* kernel_name);
 
 int sysprinter_syscall_handler(struct pt_regs regs) {
-	printk("Syscall number: %lu", regs.ax);
+	printk("Syscall number: %lu\n", regs.ax);
 	return 0;
 }
 
