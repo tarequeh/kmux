@@ -1,7 +1,7 @@
 #ifndef KERN_MUX_H
 #define KERN_MUX_H
 
-#include <asm/uaccess.h>
+#include <asm/ptrace.h>
 #include <linux/ioctl.h>
 
 #define MAX_KERNEL_SUPPORT 50
@@ -38,7 +38,7 @@ typedef struct kernel_entry kernel_entry;
 
 struct thread_register {
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
-	unsigned int thread_id;
+	int tpgid;
 };
 
 typedef struct thread_register thread_register;
