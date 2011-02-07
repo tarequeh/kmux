@@ -82,7 +82,7 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 		if (strcmp(kernel_name, kernel_entry_container[index].kernel_name) == 0) {
 			// Unregister handler
 			printk("Found kernel record at %d\n", index);
-			memset(kernel_entry_container[index].kernel_name, MAX_KERNEL_NAME_LENGTH, 0);
+			memset(kernel_entry_container[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
 			kernel_entry_container[index].kernel_syscall_handler = NULL;
 			kernel_entry_container[index].kernel_removal_handler = NULL;
 			kernel_entry_container[index].is_direct = -1;
@@ -97,7 +97,7 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 			if (strcmp(kernel_name, thread_register_container[index].kernel_name) == 0) {
 				// Unregister thread
 				printk("Removing registered tgpid %d\n", thread_register_container[index].pgid);
-				memset(thread_register_container[index].kernel_name, MAX_KERNEL_NAME_LENGTH, 0);
+				memset(thread_register_container[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
 				thread_register_container[index].pgid = 0;
 			}
 		}
@@ -145,7 +145,7 @@ static int unregister_thread(char* kernel_name, int pgid) {
 		if (strcmp(kernel_name, thread_register_container[index].kernel_name) == 0) {
 			// Unregister thread
 			printk("Removing kernel info at index %d\n", index);
-			memset(thread_register_container[index].kernel_name, MAX_KERNEL_NAME_LENGTH, 0);
+			memset(thread_register_container[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
 			thread_register_container[index].pgid = 0;
 			is_removed = 1;
 			break;
