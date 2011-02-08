@@ -165,10 +165,8 @@ void* kmux_syscall_handler(void) {
 
 	// Get TSS from higher level Linux methods
 	unsigned int temp_gdt_tss;
-	struct tss_struct *tss, *gdt_tss;
+	struct tss_struct *gdt_tss;
 	struct desc_struct *gdt_array;
-
-	tss = &per_cpu(init_tss, get_cpu());
 
 	// Get TSS value from GDT
 	gdt_array = get_cpu_gdt_table(get_cpu());
@@ -180,8 +178,6 @@ void* kmux_syscall_handler(void) {
 	temp_gdt_tss |= (((unsigned int)(gdt_array[GDT_ENTRY_TSS].base2) << 24) & 0xFF000000);
 
 	gdt_tss = (struct tss_struct *)temp_gdt_tss;
-	printk("TSS found from init_tss: %p\n", tss);
-	printk("TSS found from GDT: %p\n", gdt_tss);
 
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++){
 		if (thread_register_container[index].thread_id == group_thread_id) {
@@ -203,6 +199,12 @@ void* kmux_syscall_handler(void) {
 			kmux_sysenter_addr = (void *)(kernel_entry_container[index].kernel_syscall_handler);
 		}
 	}
+
+	gdt_tss->x86_tss.ip = (unsigned long)kmux_sysenter_addr;
+
+	unsigned long *test_tss_ip = NULL;
+	test_tss_ip = (unsigned long*)((char *)gdt_tss + 32);
+	printk("kmux handler: from tss %p, original: %p\n", (void *)(*test_tss_ip), kmux_sysenter_addr);
 
 	return kmux_sysenter_addr;
 }
