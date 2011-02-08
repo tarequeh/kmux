@@ -1,6 +1,7 @@
 #include "kern_mux.h"
 
 #include <asm/desc.h>
+#include <asm/segment.h>
 #include <asm/msr.h>
 #include <asm/uaccess.h>
 #include <linux/kernel.h>
@@ -162,7 +163,25 @@ void* kmux_syscall_handler(void) {
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	unsigned int group_thread_id = (unsigned int)task_pgrp(current);
 
-	//printk("Group thread ID: %u\n", group_thread_id);
+	// Get TSS from higher level Linux methods
+	unsigned int temp_gdt_tss;
+	struct tss_struct *tss, *gdt_tss;
+	struct desc_struct *gdt_array;
+
+	tss = &per_cpu(init_tss, get_cpu());
+
+	// Get TSS value from GDT
+	gdt_array = get_cpu_gdt_table(get_cpu());
+
+	temp_gdt_tss = 0;
+	// Extract base0
+	temp_gdt_tss |= (unsigned int)(gdt_array[GDT_ENTRY_TSS].base0);
+	temp_gdt_tss |= (((unsigned int)(gdt_array[GDT_ENTRY_TSS].base1) << 16) & 0x00FF0000);
+	temp_gdt_tss |= (((unsigned int)(gdt_array[GDT_ENTRY_TSS].base2) << 24) & 0xFF000000);
+
+	gdt_tss = (struct tss_struct *)temp_gdt_tss;
+	printk("TSS found from init_tss: %p\n", tss);
+	printk("TSS found from GDT: %p\n", gdt_tss);
 
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++){
 		if (thread_register_container[index].thread_id == group_thread_id) {
