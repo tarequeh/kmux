@@ -21,7 +21,7 @@ kernel_entry kernel_entry_container[MAX_KERNEL_SUPPORT];
 thread_register thread_register_container[MAX_THREAD_SUPPORT];
 
 extern void save_syscall_environment(void);
-unsigned long kmux_sysenter_temp = 0, kmux_sysenter_temp2 = 0;
+unsigned long kmux_sysenter_temp = 0;
 
 /* ------------------------- */
 
@@ -171,7 +171,6 @@ void kmux_syscall_handler(struct pt_regs regs) {
 	struct tss_struct *gdt_tss;
 	struct desc_struct *gdt_array;
 
-	printk("Temp var from assembly: %p, %p\n", (void *)kmux_sysenter_temp, (void *)kmux_sysenter_temp2);
 	// Get TSS value from GDT
 	gdt_array = get_cpu_gdt_table(get_cpu());
 
@@ -204,7 +203,6 @@ void kmux_syscall_handler(struct pt_regs regs) {
 		}
 	}
 
-	gdt_tss->x86_tss.ip = (unsigned long)kmux_sysenter_addr;
 
 	// x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer
 	tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
@@ -214,9 +212,8 @@ void kmux_syscall_handler(struct pt_regs regs) {
 	tss_pushback_location = (unsigned long*)((char*)(&regs) + 44);
 	*tss_pushback_location = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
 
-	printk("TSS pushback location: %p, saved TSS: %08lx\n", tss_pushback_location, *tss_pushback_location);
-	//printk("kmux handler: from tss %p\n", gdt_tss);
-	//printk("TSS->IP location: %p, value: %p\n", tss_ip_location, (void *)(*tss_ip_location));
+	printk("TSS pushback location: %p, saved value: %08lx\n", tss_pushback_location, *tss_pushback_location);
+	printk("TSS->IP location: %p, saved value: %p\n", tss_ip_location, (void *)(*tss_ip_location));
 
 	return;
 }
