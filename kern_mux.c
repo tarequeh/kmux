@@ -21,7 +21,6 @@ kernel_entry kernel_entry_container[MAX_KERNEL_SUPPORT];
 thread_register thread_register_container[MAX_THREAD_SUPPORT];
 
 extern void save_syscall_environment(void);
-unsigned long kmux_sysenter_temp = 0;
 
 /* ------------------------- */
 
@@ -204,11 +203,11 @@ void kmux_syscall_handler(struct pt_regs regs) {
 	}
 
 
-	// x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer
+	// x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
 	tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
 	*tss_ip_location = (unsigned long)kmux_sysenter_addr;
 
-	// In assembly we push only 11 registers. SO the blank space will be after 44th value
+	// In assembly we push only 11 registers. So the pushed blank space will be after 44th value
 	tss_pushback_location = (unsigned long*)((char*)(&regs) + 44);
 	*tss_pushback_location = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
 
