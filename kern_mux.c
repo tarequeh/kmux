@@ -20,6 +20,7 @@ kernel_entry kernel_entry_container[MAX_KERNEL_SUPPORT];
 thread_register thread_register_container[MAX_THREAD_SUPPORT];
 
 extern void save_syscall_environment(void);
+unsigned long kmux_sysenter_temp = 0;
 
 /* ------------------------- */
 
@@ -157,7 +158,7 @@ void* get_host_sysenter_address(void) {
 	return host_sysenter_addr;
 }
 
-void* kmux_syscall_handler(void) {
+void kmux_syscall_handler(void) {
 	int index;
 	void *kmux_sysenter_addr = NULL;
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
@@ -165,9 +166,11 @@ void* kmux_syscall_handler(void) {
 
 	// Get TSS from higher level Linux methods
 	unsigned int temp_gdt_tss;
+	unsigned long *tss_ip_location;
 	struct tss_struct *gdt_tss;
 	struct desc_struct *gdt_array;
 
+	printk("Temp var from assembly: %p\n", (void *)kmux_sysenter_temp);
 	// Get TSS value from GDT
 	gdt_array = get_cpu_gdt_table(get_cpu());
 
@@ -202,11 +205,14 @@ void* kmux_syscall_handler(void) {
 
 	gdt_tss->x86_tss.ip = (unsigned long)kmux_sysenter_addr;
 
-	unsigned long *test_tss_ip = NULL;
-	test_tss_ip = (unsigned long*)((char *)gdt_tss + 32);
-	printk("kmux handler: from tss %p, original: %p\n", (void *)(*test_tss_ip), kmux_sysenter_addr);
+	// x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer
+	tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
+	*tss_ip_location = (unsigned long)kmux_sysenter_addr;
 
-	return kmux_sysenter_addr;
+	printk("kmux handler: from tss %p, original: %p\n", gdt_tss, (void *)kmux_sysenter_temp);
+	printk("TSS->IP location: %p, value: %p\n", tss_ip_location, (void *)(*tss_ip_location));
+
+	return;
 }
 
 /* ------------------------- */

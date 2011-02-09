@@ -73,9 +73,6 @@ VM_MASK		= 0x00020000
 .align 16
 host_os_esp_storage:
 	.long 0
-kmux_sysenter_addr:
-    .word 0
-
 /* The idea is that environment (registers) is saved
  * whenever a syscall is trapped. Then the appropriate
  * kernel handler is loaded in kmux_sysenter_addr and
@@ -87,18 +84,15 @@ ENTRY(save_syscall_environment)
     # Save host sysenter address
     movl %esp, host_os_esp_storage
     movl TSS_sysenter_sp0(%esp), %esp
+    # %esp = %esp[TSS_sysenter_sp0]
 
+    push $0
 	SAVE_ALL
 
-    # Save stack position
-	push host_os_esp_storage
 	call kmux_syscall_handler
 
-    # Return value contains destination kernel handler
-	mov %eax, kmux_sysenter_addr
-	pop host_os_esp_storage
-
 	RESTORE_REGS
-invoke_syscall:
+	pop kmux_sysenter_temp
+
 	movl host_os_esp_storage, %esp
-	jmp  *(kmux_sysenter_addr)
+	jmp  *0x04(%esp)
