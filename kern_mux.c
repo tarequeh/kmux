@@ -165,10 +165,11 @@ void kmux_syscall_handler(struct pt_regs regs) {
 	unsigned int group_thread_id = (unsigned int)task_pgrp(current);
 
 	// Get TSS from higher level Linux methods
-	unsigned int temp_gdt_tss;
-	unsigned long *tss_ip_location, *tss_pushback_location;
-	struct tss_struct *gdt_tss;
-	struct desc_struct *gdt_array;
+	unsigned long temp_gdt_tss;
+	unsigned long *tss_ip_location = NULL;
+	unsigned long *tss_pushback_location = NULL;
+	struct tss_struct *gdt_tss = NULL;
+	struct desc_struct *gdt_array = NULL;
 
 	// Get TSS value from GDT
 	gdt_array = get_cpu_gdt_table(get_cpu());
@@ -212,7 +213,7 @@ void kmux_syscall_handler(struct pt_regs regs) {
 	*tss_pushback_location = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
 
 	printk("TSS pushback location: %p, saved value: %08lx\n", tss_pushback_location, *tss_pushback_location);
-	printk("TSS->IP location: %p, saved value: %p\n", tss_ip_location, (void *)(*tss_ip_location));
+	//printk("TSS->IP location: %p, saved value: %p\n", tss_ip_location, (void *)(*tss_ip_location));
 
 	return;
 }
