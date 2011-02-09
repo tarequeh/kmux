@@ -3,6 +3,7 @@
 #include <asm/desc.h>
 #include <asm/segment.h>
 #include <asm/msr.h>
+#include <asm/ptrace.h>
 #include <asm/uaccess.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -20,7 +21,7 @@ kernel_entry kernel_entry_container[MAX_KERNEL_SUPPORT];
 thread_register thread_register_container[MAX_THREAD_SUPPORT];
 
 extern void save_syscall_environment(void);
-unsigned long kmux_sysenter_temp = 0;
+unsigned long kmux_sysenter_temp = 0, kmux_sysenter_temp2 = 0;
 
 /* ------------------------- */
 
@@ -158,7 +159,7 @@ void* get_host_sysenter_address(void) {
 	return host_sysenter_addr;
 }
 
-void kmux_syscall_handler(void) {
+void kmux_syscall_handler(struct pt_regs regs) {
 	int index;
 	void *kmux_sysenter_addr = NULL;
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
@@ -166,11 +167,11 @@ void kmux_syscall_handler(void) {
 
 	// Get TSS from higher level Linux methods
 	unsigned int temp_gdt_tss;
-	unsigned long *tss_ip_location;
+	unsigned long *tss_ip_location, *tss_pushback_location;
 	struct tss_struct *gdt_tss;
 	struct desc_struct *gdt_array;
 
-	printk("Temp var from assembly: %p\n", (void *)kmux_sysenter_temp);
+	printk("Temp var from assembly: %p, %p\n", (void *)kmux_sysenter_temp, (void *)kmux_sysenter_temp2);
 	// Get TSS value from GDT
 	gdt_array = get_cpu_gdt_table(get_cpu());
 
@@ -209,8 +210,13 @@ void kmux_syscall_handler(void) {
 	tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
 	*tss_ip_location = (unsigned long)kmux_sysenter_addr;
 
-	printk("kmux handler: from tss %p, original: %p\n", gdt_tss, (void *)kmux_sysenter_temp);
-	printk("TSS->IP location: %p, value: %p\n", tss_ip_location, (void *)(*tss_ip_location));
+	// In assembly we push only 11 registers. SO the blank space will be after 44th value
+	tss_pushback_location = (unsigned long*)((char*)(&regs) + 44);
+	*tss_pushback_location = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
+
+	printk("TSS pushback location: %p, saved TSS: %08lx\n", tss_pushback_location, *tss_pushback_location);
+	//printk("kmux handler: from tss %p\n", gdt_tss);
+	//printk("TSS->IP location: %p, value: %p\n", tss_ip_location, (void *)(*tss_ip_location));
 
 	return;
 }

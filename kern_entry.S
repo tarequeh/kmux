@@ -83,16 +83,18 @@ ALIGN
 ENTRY(save_syscall_environment)
     # Save host sysenter address
     movl %esp, host_os_esp_storage
+    movl %esp, kmux_sysenter_temp
     movl TSS_sysenter_sp0(%esp), %esp
     # %esp = %esp[TSS_sysenter_sp0]
 
-    push $0
+    pushl $4
 	SAVE_ALL
 
 	call kmux_syscall_handler
 
 	RESTORE_REGS
-	pop kmux_sysenter_temp
+    movl (%esp), %esp
+	movl %esp, kmux_sysenter_temp2
 
 	movl host_os_esp_storage, %esp
 	jmp  *0x04(%esp)
