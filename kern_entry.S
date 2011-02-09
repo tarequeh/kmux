@@ -68,11 +68,6 @@ VM_MASK		= 0x00020000
     popl %fs;                               \
     popl %gs
 
-
-.data
-.align 16
-host_os_esp_storage:
-	.long 0
 .text
 ALIGN
 ENTRY(save_syscall_environment)
