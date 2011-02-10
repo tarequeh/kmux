@@ -158,7 +158,7 @@ void* get_host_sysenter_address(void) {
 	return host_sysenter_addr;
 }
 
-void kmux_syscall_handler(struct pt_regs regs) {
+void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	int index;
 	void *kmux_sysenter_addr = NULL;
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
@@ -167,7 +167,6 @@ void kmux_syscall_handler(struct pt_regs regs) {
 	// Get TSS from higher level Linux methods
 	unsigned long temp_gdt_tss;
 	unsigned long *tss_ip_location = NULL;
-	unsigned long *tss_pushback_location = NULL;
 	struct tss_struct *gdt_tss = NULL;
 	struct desc_struct *gdt_array = NULL;
 
@@ -208,12 +207,8 @@ void kmux_syscall_handler(struct pt_regs regs) {
 	tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
 	*tss_ip_location = (unsigned long)kmux_sysenter_addr;
 
-	// In assembly we push only 11 registers. So the pushed blank space will be after 44th value
-	tss_pushback_location = (unsigned long*)((char*)(&regs) + 44);
-	*tss_pushback_location = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
-
-	printk("TSS pushback location: %p, saved value: %08lx\n", tss_pushback_location, *tss_pushback_location);
-	//printk("TSS->IP location: %p, saved value: %p\n", tss_ip_location, (void *)(*tss_ip_location));
+	// In assembly we push a null value in place of orig_eax. Save the TSS location there
+	regs->orig_ax = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
 
 	return;
 }

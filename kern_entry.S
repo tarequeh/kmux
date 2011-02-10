@@ -77,6 +77,7 @@ ENTRY(save_syscall_environment)
     pushl $0
 	SAVE_ALL
 
+    movl %esp, %eax
 	call kmux_syscall_handler
 
 	RESTORE_REGS
