@@ -196,6 +196,12 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 		}
 	}
 
+	// kmux_sysenter_addr should never be NULL
+	if (kmux_sysenter_addr == NULL) {
+		printk("kmux handler is NULL. Investigate.");
+		kmux_sysenter_addr = ghost_sysenter_addr;
+	}
+
 	cpu_x86_tss = &get_cpu_var(gx86_tss);
 	cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
 
@@ -372,6 +378,8 @@ static void reset_cpu_sysenter_handler(void *info) {
 static int kmux_init(void) {
 	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
 	void *host_sysenter_addr = NULL;
+
+	printk("#~~~~~~~~~~~~~~~~~~~~~ kmux DEBUG START ~~~~~~~~~~~~~~~~~~~~~#\n");
 	printk("Installing module: %s\n", MODULE_NAME);
 	printk("Current CPU: %d\n", get_cpu());
 
@@ -383,10 +391,6 @@ static int kmux_init(void) {
 	ghost_sysenter_addr = host_sysenter_addr;
 
 	printk("Current host sysenter handler: %p\n", host_sysenter_addr);
-
-	// Override syscall handler with kmux syscall handler
-	smp_call_function(override_cpu_sysenter_handler, NULL, 1);
-	override_cpu_sysenter_handler(NULL);
 
 	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, NULL);
 
@@ -401,34 +405,22 @@ static int kmux_init(void) {
 	cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
 	printk("Loaded TSS IP %p on CPU %d\n", (void *)(*cpu_x86_tss_ip_location), get_cpu());
 
-	/*
-	// Test Code
-	void *fake_handler = (void *)0xf5b09cc2;
-	unsigned int current_thread = (unsigned int)task_pgrp(current);
-	register_kern_syscall_handler("composite", fake_handler, NULL);
-	register_thread("composite", current_thread);
-	kmux_sysenter_addr = NULL;
-	kmux_syscall_handler();
-	printk("kmux syscall handler: %p\n", kmux_sysenter_addr);
-	unregister_thread("composite", current_thread);
-	kmux_sysenter_addr = NULL;
-	kmux_syscall_handler();
-	printk("kmux syscall handler: %p\n", kmux_sysenter_addr);
-	unregister_kern_syscall_handler("composite");
-	*/
+	// Override syscall handler with kmux syscall handler
+	smp_call_function(override_cpu_sysenter_handler, NULL, 1);
+	override_cpu_sysenter_handler(NULL);
 
 	return 0;
 }
 
 static void kmux_exit(void) {
-	printk("Uninstalling the Kernel Multiplexer module.\n");
-
 	// Restore syscall handler to default
 	reset_cpu_sysenter_handler(NULL);
 	smp_call_function(reset_cpu_sysenter_handler, NULL, 1);
 
 	remove_proc_entry(KMUX_PROC_NAME, NULL);
 
+	printk("Uninstalling the Kernel Multiplexer module.\n");
+	printk("#~~~~~~~~~~~~~~~~~~~~~ kmux DEBUG END ~~~~~~~~~~~~~~~~~~~~~#\n");
 	return;
 }
 /* ------------------------- */
