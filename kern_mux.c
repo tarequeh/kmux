@@ -8,8 +8,10 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/proc_fs.h>
-#include <linux/string.h>
 #include <linux/sched.h>
+#include <linux/smp.h>
+#include <linux/string.h>
+
 
 #define MODULE_NAME "kernel_multiplexer"
 
@@ -21,6 +23,11 @@ kernel_entry kernel_entry_container[MAX_KERNEL_SUPPORT];
 thread_register thread_register_container[MAX_THREAD_SUPPORT];
 
 extern void save_syscall_environment(void);
+
+DEFINE_PER_CPU(unsigned long, gx86_tss);
+DEFINE_PER_CPU(unsigned long, gx86_tss_ip_location);
+
+void *ghost_sysenter_addr = NULL;
 
 /* ------------------------- */
 
@@ -202,7 +209,6 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 		}
 	}
 
-
 	// x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
 	tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
 	*tss_ip_location = (unsigned long)kmux_sysenter_addr;
@@ -227,6 +233,7 @@ void* hw_int_init(void) {
 }
 
 void hw_int_override_sysenter(void *handler) {
+	printk("Overriding sysenter handler with %p\n", handler);
 	wrmsr(MSR_IA32_SYSENTER_EIP, (int)handler, 0);
 }
 
@@ -330,21 +337,75 @@ static int make_kmux_proc(void) {
 
 /* ------------------------- */
 
+/* Per CPU functions */
+
+static void load_cpu_tss_locations(void *info) {
+	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
+
+	// Get TSS from higher level Linux methods
+	unsigned long temp_gdt_tss;
+	//unsigned long *tss_ip_location = NULL;
+	struct tss_struct *gdt_tss = NULL;
+	struct desc_struct *gdt_array = NULL;
+
+	printk("Loading TSS locations for CPU %d\n", get_cpu());
+
+	// Get TSS value from GDT
+	gdt_array = get_cpu_gdt_table(get_cpu());
+	temp_gdt_tss = get_desc_base(&gdt_array[GDT_ENTRY_TSS]);
+	gdt_tss = (struct tss_struct *)temp_gdt_tss;
+
+	// x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
+	cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
+	*cpu_x86_tss_ip_location = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
+	put_cpu_var(gx86_tss_ip_location);
+
+	// Save the location of tss_struct's x86_tss
+	cpu_x86_tss = &get_cpu_var(gx86_tss);
+	*cpu_x86_tss = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
+	put_cpu_var(gx86_tss);
+}
+
+static void override_cpu_sysenter_handler(void *info) {
+	wrmsr(MSR_IA32_SYSENTER_EIP, (int)(&save_syscall_environment), 0);
+}
+
+static void reset_cpu_sysenter_handler(void *info) {
+	wrmsr(MSR_IA32_SYSENTER_EIP, (int)ghost_sysenter_addr, 0);
+	printk("Restoring default sysenter handler.\n");
+}
+
 /* Module initialization/ termination */
 static int kmux_init(void) {
+	int result;
+	unsigned long *test_cpu = NULL;
 	void *host_sysenter_addr = NULL;
 	printk("Installing module: %s\n", MODULE_NAME);
+	printk("Current CPU: %d\n", get_cpu());
 
 	if (make_kmux_proc()) {
 		return -1;
 	}
 
 	host_sysenter_addr = hw_int_init();
+	ghost_sysenter_addr = host_sysenter_addr;
 
-	printk("Overriding sysenter handler: %p with %p\n", host_sysenter_addr, save_syscall_environment);
+	printk("Current host sysenter handler: %p\n", host_sysenter_addr);
+
 	hw_int_override_sysenter(save_syscall_environment);
 
 	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, NULL);
+
+	test_cpu = &get_cpu_var(gx86_tss);
+	*test_cpu = (unsigned long)host_sysenter_addr;
+	put_cpu_var(gx86_tss);
+
+	// Test per CPU tss loader
+	result = smp_call_function(load_cpu_tss_locations, NULL, 1);
+	printk("Result of calling TSS loading functions for all CPU: %d\n", result);
+
+	test_cpu = &get_cpu_var(gx86_tss);
+	printk("Loaded TSS %p on CPU %d\n", (void *)(*test_cpu), result);
 
 	/*
 	// Test Code
