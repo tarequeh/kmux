@@ -360,16 +360,16 @@ static void load_cpu_tss_locations(void *info) {
 
 static void override_cpu_sysenter_handler(void *info) {
 	wrmsr(MSR_IA32_SYSENTER_EIP, (int)(&save_syscall_environment), 0);
+	printk("Overriding sysenter handler with: %p on CPU %d\n", (void *)(&save_syscall_environment), get_cpu());
 }
 
 static void reset_cpu_sysenter_handler(void *info) {
 	wrmsr(MSR_IA32_SYSENTER_EIP, (int)ghost_sysenter_addr, 0);
-	printk("Restoring default sysenter handler.\n");
+	printk("Restoring sysenter handler to default: %p on CPU %d\n", (void *)ghost_sysenter_addr, get_cpu());
 }
 
 /* Module initialization/ termination */
 static int kmux_init(void) {
-	int result;
 	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
 	void *host_sysenter_addr = NULL;
 	printk("Installing module: %s\n", MODULE_NAME);
@@ -384,16 +384,16 @@ static int kmux_init(void) {
 
 	printk("Current host sysenter handler: %p\n", host_sysenter_addr);
 
-	hw_int_override_sysenter(save_syscall_environment);
+	// Override syscall handler with kmux syscall handler
+	smp_call_function(override_cpu_sysenter_handler, NULL, 1);
+	override_cpu_sysenter_handler(NULL);
 
 	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, NULL);
 
 	// Load TSS locations for current CPU
 	load_cpu_tss_locations(NULL);
-
-	// Test per CPU tss loader
-	result = smp_call_function(load_cpu_tss_locations, NULL, 1);
-	printk("Result of calling TSS loading functions for all CPU: %d\n", result);
+	// Load TSS locations for all CPUs
+	smp_call_function(load_cpu_tss_locations, NULL, 1);
 
 	cpu_x86_tss = &get_cpu_var(gx86_tss);
 	printk("Loaded TSS %p on CPU %d\n", (void *)(*cpu_x86_tss), get_cpu());
@@ -421,10 +421,12 @@ static int kmux_init(void) {
 }
 
 static void kmux_exit(void) {
-	void *host_sysenter_addr = get_host_sysenter_address();
 	printk("Uninstalling the Kernel Multiplexer module.\n");
-	printk("Retrieved host sysenter handler: %p\n", host_sysenter_addr);
-	hw_int_reset(host_sysenter_addr);
+
+	// Restore syscall handler to default
+	reset_cpu_sysenter_handler(NULL);
+	smp_call_function(reset_cpu_sysenter_handler, NULL, 1);
+
 	remove_proc_entry(KMUX_PROC_NAME, NULL);
 
 	return;
