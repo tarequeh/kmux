@@ -172,21 +172,8 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	unsigned int group_thread_id = (unsigned int)task_pgrp(current);
 
 	// Get TSS from higher level Linux methods
-	unsigned long temp_gdt_tss;
+	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
 	unsigned long *tss_ip_location = NULL;
-	struct tss_struct *gdt_tss = NULL;
-	struct desc_struct *gdt_array = NULL;
-
-	// Get TSS value from GDT
-	gdt_array = get_cpu_gdt_table(get_cpu());
-
-	temp_gdt_tss = 0;
-	// Extract base0
-	temp_gdt_tss |= (unsigned int)(gdt_array[GDT_ENTRY_TSS].base0);
-	temp_gdt_tss |= (((unsigned int)(gdt_array[GDT_ENTRY_TSS].base1) << 16) & 0x00FF0000);
-	temp_gdt_tss |= (((unsigned int)(gdt_array[GDT_ENTRY_TSS].base2) << 24) & 0xFF000000);
-
-	gdt_tss = (struct tss_struct *)temp_gdt_tss;
 
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++){
 		if (thread_register_container[index].thread_id == group_thread_id) {
@@ -209,12 +196,17 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 		}
 	}
 
+	cpu_x86_tss = &get_cpu_var(gx86_tss);
+	cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
+
 	// x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
-	tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
+	//tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
+	tss_ip_location = (unsigned long *)(*cpu_x86_tss_ip_location);
 	*tss_ip_location = (unsigned long)kmux_sysenter_addr;
 
 	// In assembly we push a null value in place of orig_eax. Save the TSS location there
-	regs->orig_ax = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
+	//regs->orig_ax = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
+	regs->orig_ax = *cpu_x86_tss;
 
 	return;
 }
@@ -378,7 +370,7 @@ static void reset_cpu_sysenter_handler(void *info) {
 /* Module initialization/ termination */
 static int kmux_init(void) {
 	int result;
-	unsigned long *test_cpu = NULL;
+	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
 	void *host_sysenter_addr = NULL;
 	printk("Installing module: %s\n", MODULE_NAME);
 	printk("Current CPU: %d\n", get_cpu());
@@ -396,16 +388,18 @@ static int kmux_init(void) {
 
 	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, NULL);
 
-	test_cpu = &get_cpu_var(gx86_tss);
-	*test_cpu = (unsigned long)host_sysenter_addr;
-	put_cpu_var(gx86_tss);
+	// Load TSS locations for current CPU
+	load_cpu_tss_locations(NULL);
 
 	// Test per CPU tss loader
 	result = smp_call_function(load_cpu_tss_locations, NULL, 1);
 	printk("Result of calling TSS loading functions for all CPU: %d\n", result);
 
-	test_cpu = &get_cpu_var(gx86_tss);
-	printk("Loaded TSS %p on CPU %d\n", (void *)(*test_cpu), result);
+	cpu_x86_tss = &get_cpu_var(gx86_tss);
+	printk("Loaded TSS %p on CPU %d\n", (void *)(*cpu_x86_tss), get_cpu());
+
+	cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
+	printk("Loaded TSS IP %p on CPU %d\n", (void *)(*cpu_x86_tss_ip_location), get_cpu());
 
 	/*
 	// Test Code
