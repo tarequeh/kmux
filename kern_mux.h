@@ -1,5 +1,6 @@
 #include <linux/ioctl.h>
 
+#define MAX_CPU_SUPPORT 16
 #define MAX_KERNEL_SUPPORT 50
 #define MAX_THREAD_SUPPORT 1000
 #define MAX_KERNEL_NAME_LENGTH 50
@@ -30,9 +31,9 @@ struct kernel_entry {
 
 typedef struct kernel_entry kernel_entry;
 
-struct thread_register {
+struct thread_entry {
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	unsigned int thread_id;
 };
 
-typedef struct thread_register thread_register;
+typedef struct thread_entry thread_entry;
