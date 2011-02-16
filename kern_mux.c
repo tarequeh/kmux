@@ -1,5 +1,3 @@
-#include "kern_mux.h"
-
 #include <asm/desc.h>
 #include <asm/segment.h>
 #include <asm/msr.h>
@@ -7,11 +5,14 @@
 #include <asm/uaccess.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include<linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/string.h>
 
+
+#include "kern_mux.h"
 
 #define MODULE_NAME "kernel_multiplexer"
 
@@ -33,7 +34,7 @@ int cpu_register[MAX_CPU_SUPPORT];
 
 /* ------------------------- */
 
-int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_remove_handler removal_handler){
+int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, int is_direct){
 	int index, is_spot_found;
 
 	printk("Adding handler: %p for kernel: %s\n", syscall_handler, kernel_name);
@@ -71,7 +72,7 @@ int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler
 	} else {
 		// Register handlers
 		kernel_register[index].kernel_syscall_handler = syscall_handler;
-		kernel_register[index].kernel_removal_handler = removal_handler;
+		kernel_register[index].is_direct = is_direct;
 		return SUCCESS;
 	}
 }
@@ -91,18 +92,30 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 		if (strcmp(kernel_name, kernel_register[index].kernel_name) == 0) {
 			// Unregister handler
 			printk("Found kernel record at %d\n", index);
-			memset(kernel_register[index].kernel_name, MAX_KERNEL_NAME_LENGTH, 0);
+			memset(kernel_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
 			kernel_register[index].kernel_syscall_handler = NULL;
-			kernel_register[index].kernel_removal_handler = NULL;
+			kernel_register[index].is_direct = -1;
 			is_removed = 1;
 			break;
+		}
+	}
+
+	if (is_removed) {
+		// Remove all registered threads
+		for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
+			if (strcmp(kernel_name, thread_register[index].kernel_name) == 0) {
+				// Unregister thread
+				printk("Removing registered tgpid %d\n", thread_register[index].pgid);
+				memset(thread_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
+				thread_register[index].pgid = 0;
+			}
 		}
 	}
 
 	return is_removed ? SUCCESS:-EFAULT;
 }
 
-int register_thread(char* kernel_name, unsigned int thread_id) {
+static int register_thread(char* kernel_name, int pgid) {
 	int index, is_inserted = 0;
 
 	// Basic check
@@ -111,13 +124,13 @@ int register_thread(char* kernel_name, unsigned int thread_id) {
 	}
 
 	// Find empty spot
-	printk("Registering thread: %u with kernel: %s\n", thread_id, kernel_name);
+	printk("Registering thread: %u with kernel: %s\n", pgid, kernel_name);
 	for (index = 0; index < MAX_THREAD_SUPPORT; index++) {
 		if (strlen(thread_register[index].kernel_name) == 0) {
 			// Register thread
 			printk("Found thread registration spot at %d\n", index);
 			strcpy(thread_register[index].kernel_name, kernel_name);
-			thread_register[index].thread_id = thread_id;
+			thread_register[index].pgid = pgid;
 			is_inserted = 1;
 			break;
 		}
@@ -126,7 +139,7 @@ int register_thread(char* kernel_name, unsigned int thread_id) {
 	return is_inserted ? SUCCESS:-EFAULT;
 }
 
-int unregister_thread(char* kernel_name, unsigned int thread_id) {
+static int unregister_thread(char* kernel_name, int pgid) {
 	int index, is_removed;
 
 	// Basic check
@@ -136,13 +149,13 @@ int unregister_thread(char* kernel_name, unsigned int thread_id) {
 
 	// Find token spot
 	is_removed = 0;
-	printk("De-registering thread: %u from kernel: %s\n", thread_id, kernel_name);
+	printk("De-registering thread: %u from kernel: %s\n", pgid, kernel_name);
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
 		if (strcmp(kernel_name, thread_register[index].kernel_name) == 0) {
 			// Unregister thread
 			printk("Removing kernel info at index %d\n", index);
-			memset(thread_register[index].kernel_name, MAX_KERNEL_NAME_LENGTH, 0);
-			thread_register[index].thread_id = 0;
+			memset(thread_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
+			thread_register[index].pgid = 0;
 			is_removed = 1;
 			break;
 		}
@@ -151,70 +164,70 @@ int unregister_thread(char* kernel_name, unsigned int thread_id) {
 	return is_removed ? SUCCESS:-EFAULT;
 }
 
-void* get_host_sysenter_address(void) {
-	int index;
-	char kernel_name[MAX_KERNEL_NAME_LENGTH];
-	void* host_sysenter_addr = NULL;
-
-	strcpy(kernel_name, DEFAULT_KERNEL_NAME);
-
-	for(index = 0; index < MAX_KERNEL_SUPPORT; index++){
-		if (strcmp(kernel_name, kernel_register[index].kernel_name) == 0) {
-			host_sysenter_addr = (void *)(kernel_register[index].kernel_syscall_handler);
-		}
-	}
-
-	return host_sysenter_addr;
-}
-
 void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
-	int index;
-	void *kmux_sysenter_addr = NULL;
+	int index, is_direct;
+	kmux_kernel_syscall_handler kmux_sysenter_handler;
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
-	unsigned int group_thread_id = (unsigned int)task_pgrp(current);
+	struct pid *pid = task_pgrp(current);
+	int pgid = pid->numbers[0].nr;
 
-	// Get TSS from higher level Linux methods
+	// Get TSS from saved CPU variables
 	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
 	unsigned long *tss_ip_location = NULL;
 
-	for(index = 0; index < MAX_THREAD_SUPPORT; index++){
-		if (thread_register[index].thread_id == group_thread_id) {
-			strcpy(kernel_name, thread_register[index].kernel_name);
-			break;
+	// If PGID is 0 then its the host kernel's process group. Skip such processes.
+	if (pgid == 0) {
+		kmux_sysenter_handler = (kmux_kernel_syscall_handler)ghost_sysenter_addr;
+		is_direct = 1;
+	} else {
+		for(index = 0; index < MAX_THREAD_SUPPORT; index++){
+			if (thread_register[index].pgid == pgid) {
+				strcpy(kernel_name, thread_register[index].kernel_name);
+				break;
+			}
 		}
-	}
 
-	//printk("Index: %d MAX_THREAD: %d\n", index, MAX_THREAD_SUPPORT);
-	if (index == MAX_THREAD_SUPPORT) {
-		// Thread not registered. Host OS will handle? Or should we return -EFAULT
-		strcpy(kernel_name, DEFAULT_KERNEL_NAME);
-	}
+		if (index == MAX_THREAD_SUPPORT) {
+			// Thread not registered. Host OS will handle? Or should we return -EFAULT
+			kmux_sysenter_handler = (kmux_kernel_syscall_handler)ghost_sysenter_addr;
+			is_direct = 1;
+		} else {
+			// Thread is registered. Look up kernel
+			for(index = 0; index < MAX_KERNEL_SUPPORT; index++){
+				if (strcmp(kernel_name, kernel_register[index].kernel_name) == 0) {
+					//printk("Retrieving kernel info at index: %d\n", index);
+					kmux_sysenter_handler = kernel_register[index].kernel_syscall_handler;
+					is_direct = kernel_register[index].is_direct;
+					break;
+				}
+			}
 
-	//printk("Found matching kernel: %s\n", kernel_name);
-	for(index = 0; index < MAX_KERNEL_SUPPORT; index++){
-		if (strcmp(kernel_name, kernel_register[index].kernel_name) == 0) {
-			//printk("Retrieving kernel info at index: %d\n", index);
-			kmux_sysenter_addr = (void *)(kernel_register[index].kernel_syscall_handler);
+			if (index == MAX_KERNEL_SUPPORT) {
+				// Something went wrong, thread was registered but kernel not found
+				printk("Failed to locate kernel %s requested by thread %d", kernel_name, pgid);
+				kmux_sysenter_handler = (kmux_kernel_syscall_handler)ghost_sysenter_addr;
+				is_direct = 1;
+			}
 		}
-	}
-
-	// kmux_sysenter_addr should never be NULL
-	if (kmux_sysenter_addr == NULL) {
-		printk("kmux handler is NULL. Investigate.");
-		kmux_sysenter_addr = ghost_sysenter_addr;
 	}
 
 	cpu_x86_tss = &get_cpu_var(gx86_tss);
 	cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
 
-	// x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
-	//tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
-	tss_ip_location = (unsigned long *)(*cpu_x86_tss_ip_location);
-	*tss_ip_location = (unsigned long)kmux_sysenter_addr;
-
 	// In assembly we push a null value in place of orig_eax. Save the TSS location there
 	//regs->orig_ax = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
 	regs->orig_ax = *cpu_x86_tss;
+
+	// x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
+	//tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
+	tss_ip_location = (unsigned long *)(*cpu_x86_tss_ip_location);
+
+	if (is_direct) {
+		*tss_ip_location = (unsigned long)kmux_sysenter_handler;
+	} else {
+		(*kmux_sysenter_handler)(regs);
+		*tss_ip_location = (unsigned long)ghost_sysenter_addr;
+	}
 
 	return;
 }
@@ -223,7 +236,7 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 
 
 /* Syscall capture */
-void* hw_int_init(void) {
+static void* hw_int_init(void) {
 	void *host_sysenter_addr = NULL;
 	int se_addr, trash;
 	printk("Reading and saving default sysenter handler.\n");
@@ -232,14 +245,14 @@ void* hw_int_init(void) {
 	return host_sysenter_addr;
 }
 
-void hw_int_override_sysenter(void *handler) {
+static void hw_int_override_sysenter(void *handler) {
 	printk("Overriding sysenter handler with %p\n", handler);
 	wrmsr(MSR_IA32_SYSENTER_EIP, (int)handler, 0);
 }
 
-void hw_int_reset(void *host_sysenter_addr) {
-	wrmsr(MSR_IA32_SYSENTER_EIP, (int)host_sysenter_addr, 0);
+static void hw_int_reset(void *host_sysenter_addr) {
 	printk("Restoring default sysenter handler.\n");
+	wrmsr(MSR_IA32_SYSENTER_EIP, (int)host_sysenter_addr, 0);
 }
 /* ------------------------- */
 
@@ -287,7 +300,7 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 				ret = -EFAULT;
 			}
 
-			is_registered = register_thread(thread_info.kernel_name, thread_info.thread_id);
+			is_registered = register_thread(thread_info.kernel_name, thread_info.pgid);
 			return is_registered;
 		}
 		case KMUX_UNREGISTER_THREAD:
@@ -301,7 +314,7 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 				ret = -EFAULT;
 			}
 
-			is_unregistered = unregister_thread(thread_info.kernel_name, thread_info.thread_id);
+			is_unregistered = unregister_thread(thread_info.kernel_name, thread_info.pgid);
 			return is_unregistered;
 		}
 		default:
@@ -377,9 +390,9 @@ static void reset_cpu_sysenter_handler(void *info) {
 }
 
 /* Module initialization/ termination */
-static int kmux_init(void) {
-	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
+static int __init kmux_init(void) {
 	void *host_sysenter_addr = NULL;
+	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
 
 	printk("#~~~~~~~~~~~~~~~~~~~~~ kmux DEBUG START ~~~~~~~~~~~~~~~~~~~~~#\n");
 	printk("Installing module: %s\n", MODULE_NAME);
@@ -394,7 +407,7 @@ static int kmux_init(void) {
 
 	printk("Current host sysenter handler: %p\n", host_sysenter_addr);
 
-	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, NULL);
+	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, 1);
 
 	// Load TSS locations for current CPU
 	load_cpu_tss_locations(NULL);
@@ -414,11 +427,10 @@ static int kmux_init(void) {
 	return 0;
 }
 
-static void kmux_exit(void) {
+static void __exit kmux_exit(void) {
 	// Restore syscall handler to default
 	reset_cpu_sysenter_handler(NULL);
 	smp_call_function(reset_cpu_sysenter_handler, NULL, 1);
-
 	remove_proc_entry(KMUX_PROC_NAME, NULL);
 
 	printk("Uninstalling the Kernel Multiplexer module.\n");
@@ -433,3 +445,6 @@ module_exit(kmux_exit);
 MODULE_AUTHOR("Tareque Hossain");
 MODULE_DESCRIPTION("Kernel Multiplexer for Handling Sandboxed System Calls");
 MODULE_LICENSE("GPL");
+
+EXPORT_SYMBOL_GPL(register_kern_syscall_handler);
+EXPORT_SYMBOL_GPL(unregister_kern_syscall_handler);
