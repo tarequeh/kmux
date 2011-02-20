@@ -3,10 +3,13 @@
 #include <asm/msr.h>
 #include <asm/ptrace.h>
 #include <asm/uaccess.h>
+#include <linux/cpu.h>
+#include <linux/cpumask.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include<linux/init.h>
+#include <linux/init.h>
 #include <linux/proc_fs.h>
+#include <linux/rcupdate.h>
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/string.h>
@@ -15,6 +18,8 @@
 #include "kern_mux.h"
 
 #define MODULE_NAME "kernel_multiplexer"
+#define HOST_KERNEL_CPU 1
+#define HOST_KERNEL_INDEX 0
 
 // Needs to be replaced with semaphore
 static int device_open = 0;
@@ -170,10 +175,17 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	struct pid *pid = task_pgrp(current);
 	int pgid = pid->numbers[0].nr;
+	int current_cpu;
 
 	// Get TSS from saved CPU variables
 	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
 	unsigned long *tss_ip_location = NULL;
+
+	current_cpu = get_cpu();
+
+	if (current_cpu != HOST_KERNEL_CPU) {
+		printk("Syscall: %lu executing on CPU %d. Pid: %d\n", regs->ax, get_cpu(), pgid);
+	}
 
 	// If PGID is 0 then its the host kernel's process group. Skip such processes.
 	if (pgid == 0) {
@@ -391,8 +403,34 @@ static void reset_cpu_sysenter_handler(void *info) {
 
 /* Module initialization/ termination */
 static int __init kmux_init(void) {
-	void *host_sysenter_addr = NULL;
+	void *host_sysenter_addr;
 	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
+	struct task_struct *task = NULL;
+	const struct cpumask *forced_cpu_mask;
+	int retval = 0, switch_effort = 0;
+
+	// Set affinity of all current process to CPU 0
+	// Get mask for CPU 0
+	forced_cpu_mask = cpumask_of(HOST_KERNEL_CPU);
+	get_online_cpus();
+	for_each_process(task) {
+		switch_effort = 0;
+		retval = 0;
+
+		while(!retval) {
+            switch_effort++;
+			if (switch_effort > 200) {
+				break;
+			}
+
+			rcu_read_lock();
+			cpumask_copy(&(task->cpus_allowed), forced_cpu_mask);
+			rcu_read_unlock();
+
+			retval = set_cpus_allowed_ptr(task, forced_cpu_mask);
+		}
+	}
+	put_online_cpus();
 
 	printk("#~~~~~~~~~~~~~~~~~~~~~ kmux DEBUG START ~~~~~~~~~~~~~~~~~~~~~#\n");
 	printk("Installing module: %s\n", MODULE_NAME);
@@ -428,6 +466,8 @@ static int __init kmux_init(void) {
 }
 
 static void __exit kmux_exit(void) {
+	struct task_struct *task;
+
 	// Restore syscall handler to default
 	reset_cpu_sysenter_handler(NULL);
 	smp_call_function(reset_cpu_sysenter_handler, NULL, 1);
@@ -435,6 +475,12 @@ static void __exit kmux_exit(void) {
 
 	printk("Uninstalling the Kernel Multiplexer module.\n");
 	printk("#~~~~~~~~~~~~~~~~~~~~~ kmux DEBUG END ~~~~~~~~~~~~~~~~~~~~~#\n");
+
+	get_online_cpus();
+	for_each_process(task) {
+        cpumask_setall(&(task->cpus_allowed));
+	}
+	put_online_cpus();
 	return;
 }
 /* ------------------------- */
