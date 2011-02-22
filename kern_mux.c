@@ -14,12 +14,11 @@
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/string.h>
-#include <linux/syscalls.h>
 
 #include "kern_mux.h"
 
 #define MODULE_NAME "kernel_multiplexer"
-#define HOST_KERNEL_CPU 1
+#define HOST_KERNEL_CPU 0
 #define HOST_KERNEL_INDEX 0
 
 // Needs to be replaced with semaphore
@@ -457,10 +456,10 @@ static int __init kmux_init(void) {
 	smp_call_function(load_cpu_tss_locations, NULL, 1);
 
 	cpu_x86_tss = &get_cpu_var(gx86_tss);
-	//printk("Loaded TSS %p on CPU %d\n", (void *)(*cpu_x86_tss), get_cpu());
+	printk("Loaded TSS %p on CPU %d\n", (void *)(*cpu_x86_tss), get_cpu());
 
 	cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
-	//printk("Loaded TSS IP %p on CPU %d\n", (void *)(*cpu_x86_tss_ip_location), get_cpu());
+	printk("Loaded TSS IP %p on CPU %d\n", (void *)(*cpu_x86_tss_ip_location), get_cpu());
 
 	// Override syscall handler with kmux syscall handler
 	smp_call_function(override_cpu_sysenter_handler, NULL, 1);
