@@ -7,13 +7,14 @@
 #include <linux/cpumask.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/rcupdate.h>
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/string.h>
-
+#include <linux/syscalls.h>
 
 #include "kern_mux.h"
 
@@ -38,6 +39,34 @@ void *ghost_sysenter_addr = NULL;
 int cpu_register[MAX_CPU_SUPPORT];
 
 /* ------------------------- */
+
+/* Priority setting and idling functions *
+
+static int call_getrlimit(int id, char *name)
+{
+	struct rlimit rl;
+
+	if (sys_getrlimit(id, &rl)) {
+		printk("Error getting priority limit for %s\n", name);
+		return -EFAULT;
+	}
+	printk("rlimit for %s is %d:%d (Infinity: %d)\n", name, (int)rl.rlim_cur, (int)rl.rlim_max, (int)RLIM_INFINITY);
+}
+
+static int call_setrlimit(int id, unsigned long cur, unsigned long max) {
+	struct rlimit rl;
+
+	rl.rlim_cur = cur;
+	rl.rlim_max = max;
+	if (sys_setrlimit(id, &rl)) {
+		printk("Error changing priority limit\n");
+		return -EFAULT;
+	}
+}
+
+// ------------------------- */
+
+/* kmux API functions */
 
 int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, int is_direct){
 	int index, is_spot_found;
@@ -404,33 +433,8 @@ static void reset_cpu_sysenter_handler(void *info) {
 /* Module initialization/ termination */
 static int __init kmux_init(void) {
 	void *host_sysenter_addr;
+
 	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
-	struct task_struct *task = NULL;
-	const struct cpumask *forced_cpu_mask;
-	int retval = 0, switch_effort = 0;
-
-	// Set affinity of all current process to CPU 0
-	// Get mask for CPU 0
-	forced_cpu_mask = cpumask_of(HOST_KERNEL_CPU);
-	get_online_cpus();
-	for_each_process(task) {
-		switch_effort = 0;
-		retval = 0;
-
-		while(!retval) {
-            switch_effort++;
-			if (switch_effort > 200) {
-				break;
-			}
-
-			rcu_read_lock();
-			cpumask_copy(&(task->cpus_allowed), forced_cpu_mask);
-			rcu_read_unlock();
-
-			retval = set_cpus_allowed_ptr(task, forced_cpu_mask);
-		}
-	}
-	put_online_cpus();
 
 	printk("#~~~~~~~~~~~~~~~~~~~~~ kmux DEBUG START ~~~~~~~~~~~~~~~~~~~~~#\n");
 	printk("Installing module: %s\n", MODULE_NAME);
@@ -443,7 +447,7 @@ static int __init kmux_init(void) {
 	host_sysenter_addr = hw_int_init();
 	ghost_sysenter_addr = host_sysenter_addr;
 
-	printk("Current host sysenter handler: %p\n", host_sysenter_addr);
+	//printk("Current host sysenter handler: %p\n", host_sysenter_addr);
 
 	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, 1);
 
@@ -453,10 +457,10 @@ static int __init kmux_init(void) {
 	smp_call_function(load_cpu_tss_locations, NULL, 1);
 
 	cpu_x86_tss = &get_cpu_var(gx86_tss);
-	printk("Loaded TSS %p on CPU %d\n", (void *)(*cpu_x86_tss), get_cpu());
+	//printk("Loaded TSS %p on CPU %d\n", (void *)(*cpu_x86_tss), get_cpu());
 
 	cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
-	printk("Loaded TSS IP %p on CPU %d\n", (void *)(*cpu_x86_tss_ip_location), get_cpu());
+	//printk("Loaded TSS IP %p on CPU %d\n", (void *)(*cpu_x86_tss_ip_location), get_cpu());
 
 	// Override syscall handler with kmux syscall handler
 	smp_call_function(override_cpu_sysenter_handler, NULL, 1);
@@ -466,8 +470,6 @@ static int __init kmux_init(void) {
 }
 
 static void __exit kmux_exit(void) {
-	struct task_struct *task;
-
 	// Restore syscall handler to default
 	reset_cpu_sysenter_handler(NULL);
 	smp_call_function(reset_cpu_sysenter_handler, NULL, 1);
@@ -475,12 +477,6 @@ static void __exit kmux_exit(void) {
 
 	printk("Uninstalling the Kernel Multiplexer module.\n");
 	printk("#~~~~~~~~~~~~~~~~~~~~~ kmux DEBUG END ~~~~~~~~~~~~~~~~~~~~~#\n");
-
-	get_online_cpus();
-	for_each_process(task) {
-        cpumask_setall(&(task->cpus_allowed));
-	}
-	put_online_cpus();
 	return;
 }
 /* ------------------------- */
