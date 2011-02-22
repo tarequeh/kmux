@@ -35,7 +35,7 @@ DEFINE_PER_CPU(unsigned long, gx86_tss_ip_location);
 
 void *ghost_sysenter_addr = NULL;
 
-int cpu_register[MAX_CPU_SUPPORT];
+cpu_entry cpu_register[MAX_CPU_SUPPORT];
 
 /* ------------------------- */
 
@@ -140,7 +140,7 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 				// Unregister thread
 				printk("Removing registered tgpid %d\n", thread_register[index].pgid);
 				memset(thread_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
-				thread_register[index].pgid = 0;
+				thread_register[index].pgid = -1;
 			}
 		}
 	}
@@ -188,7 +188,7 @@ static int unregister_thread(char* kernel_name, int pgid) {
 			// Unregister thread
 			printk("Removing kernel info at index %d\n", index);
 			memset(thread_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
-			thread_register[index].pgid = 0;
+			thread_register[index].pgid = -1;
 			is_removed = 1;
 			break;
 		}
@@ -431,6 +431,7 @@ static void reset_cpu_sysenter_handler(void *info) {
 
 /* Module initialization/ termination */
 static int __init kmux_init(void) {
+	int index;
 	void *host_sysenter_addr;
 
 	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
@@ -443,12 +444,33 @@ static int __init kmux_init(void) {
 		return -1;
 	}
 
+	// Initialize data structures with default value
+	for (index = 0; index < MAX_KERNEL_SUPPORT; index++){
+		memset(kernel_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
+		kernel_register[index].kernel_syscall_handler = NULL;
+		kernel_register[index].is_direct = -1;
+	}
+
+	for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
+		memset(thread_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
+		thread_register[index].pgid = -1;
+	}
+
+	for(index = 0; index < MAX_CPU_SUPPORT; index++) {
+		cpu_register[index].kernel_index = -1;
+		cpu_register[index].idle_thread_created = -1;
+	}
+
 	host_sysenter_addr = hw_int_init();
 	ghost_sysenter_addr = host_sysenter_addr;
 
-	//printk("Current host sysenter handler: %p\n", host_sysenter_addr);
+	printk("Current host sysenter handler: %p\n", host_sysenter_addr);
 
+	// Default kernel has to be at HOST_KERNEL_INDEX
 	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, 1);
+
+	cpu_register[HOST_KERNEL_CPU].kernel_index = HOST_KERNEL_INDEX;
+	cpu_register[HOST_KERNEL_CPU].idle_thread_created = 0;
 
 	// Load TSS locations for current CPU
 	load_cpu_tss_locations(NULL);

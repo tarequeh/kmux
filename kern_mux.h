@@ -42,4 +42,11 @@ struct thread_entry {
 
 typedef struct thread_entry thread_entry;
 
+struct cpu_entry {
+	int kernel_index;
+	int idle_thread_created;
+};
+
+typedef struct cpu_entry cpu_entry;
+
 #endif
