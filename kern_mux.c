@@ -24,9 +24,10 @@
 // Needs to be replaced with semaphore
 static int device_open = 0;
 
-/* Variables global to kmux module (access protected via semaphore) */
+/* Variables global to kmux module (TODO: Protect write access via semaphore) */
 kernel_entry kernel_register[MAX_KERNEL_SUPPORT];
 thread_entry thread_register[MAX_THREAD_SUPPORT];
+cpu_entry cpu_register[MAX_CPU_SUPPORT];
 
 extern void save_syscall_environment(void);
 
@@ -35,221 +36,265 @@ DEFINE_PER_CPU(unsigned long, gx86_tss_ip_location);
 
 void *ghost_sysenter_addr = NULL;
 
-cpu_entry cpu_register[MAX_CPU_SUPPORT];
+/* Array lookup and validation functions */
 
-/* ------------------------- */
+int get_kernel_index(char *kernel_name) {
+	int index;
 
-/* Priority setting and idling functions *
-
-static int call_getrlimit(int id, char *name)
-{
-	struct rlimit rl;
-
-	if (sys_getrlimit(id, &rl)) {
-		printk("Error getting priority limit for %s\n", name);
-		return -EFAULT;
+	if (kernel_name[0] == 0 || strlen(kernel_name) > MAX_KERNEL_NAME_LENGTH) {
+		return -EINVAL;
 	}
-	printk("rlimit for %s is %d:%d (Infinity: %d)\n", name, (int)rl.rlim_cur, (int)rl.rlim_max, (int)RLIM_INFINITY);
+
+	for(index = 0; index < MAX_KERNEL_SUPPORT; index++) {
+		if (memcmp(kernel_name, kernel_register[index].kernel_name, MAX_KERNEL_NAME_LENGTH) == 0) {
+			return index;
+		}
+	}
+
+	return -EINVAL;
 }
 
-static int call_setrlimit(int id, unsigned long cur, unsigned long max) {
-	struct rlimit rl;
-
-	rl.rlim_cur = cur;
-	rl.rlim_max = max;
-	if (sys_setrlimit(id, &rl)) {
-		printk("Error changing priority limit\n");
-		return -EFAULT;
+static int validate_kernel_index(int kernel_index) {
+	if (kernel_index < 0 || kernel_index >= MAX_KERNEL_SUPPORT) {
+		return -EINVAL;
 	}
+
+	if (kernel_register[kernel_index].kernel_name[0] == 0 || kernel_register[kernel_index].kernel_syscall_handler == NULL) {
+		return -EINVAL;
+	}
+
+	return SUCCESS;
 }
 
-// ------------------------- */
+static int get_cpu_for_kernel_index(int kernel_index) {
+	int index;
+
+	for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
+		if (cpu_register[index].kernel_index == kernel_index) {
+			return index;
+		}
+	}
+
+	return -EINVAL;
+}
 
 /* kmux API functions */
 
 int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, int is_direct){
-	int index, is_spot_found;
+	int index;
 
-	printk("Adding handler: %p for kernel: %s\n", syscall_handler, kernel_name);
-	// Basic check
-	if (strlen(kernel_name) > MAX_KERNEL_NAME_LENGTH) {
-		return -EFAULT;
+	printk("register_kern_syscall_handler: Adding handler: %p for kernel: %s\n", syscall_handler, kernel_name);
+	// Argument check
+	if (kernel_name[0] == 0 || strlen(kernel_name) > MAX_KERNEL_NAME_LENGTH || syscall_handler == NULL || is_direct < 0 || is_direct > 1) {
+		return -EINVAL;
 	}
 
-	// Find token spot
-	printk("Checking for existing spot\n");
-	is_spot_found = 0;
+	// Find spot by kernel name
 	for (index = 0; index < MAX_KERNEL_SUPPORT; index++) {
 		if (strcmp(kernel_name, kernel_register[index].kernel_name) == 0) {
-			is_spot_found = 1;
-			break;
+			printk("register_kern_syscall_handler: Found existing spot at %d\n", index);
+			kernel_register[index].kernel_syscall_handler = syscall_handler;
+			kernel_register[index].is_direct = is_direct;
+			return SUCCESS;
 		}
 	}
 
-	if (!is_spot_found) {
-		// Check for empty spot
-		printk("Checking for empty spot\n");
-		for(index = 0; index < MAX_KERNEL_SUPPORT; index++) {
-			if (strlen(kernel_register[index].kernel_name) == 0) {
-				printk("Found spot at %d\n", index);
-				strcpy(kernel_register[index].kernel_name, kernel_name);
-				is_spot_found = 1;
-				break;
-			}
+	// No existing spot. Check for empty spot
+	for(index = 0; index < MAX_KERNEL_SUPPORT; index++) {
+		if (kernel_register[index].kernel_name[0] == 0) {
+			printk("register_kern_syscall_handler: Found empty spot at %d\n", index);
+			strcpy(kernel_register[index].kernel_name, kernel_name);
+			kernel_register[index].kernel_syscall_handler = syscall_handler;
+			kernel_register[index].is_direct = is_direct;
+			return SUCCESS;
 		}
 	}
 
-	// No more kernel spots available
-	if (!is_spot_found) {
-		return -EFAULT;
-	} else {
-		// Register handlers
-		kernel_register[index].kernel_syscall_handler = syscall_handler;
-		kernel_register[index].is_direct = is_direct;
-		return SUCCESS;
-	}
+	printk("register_kern_syscall_handler: Failed to register %s. Could not find existing/empty spot\n", kernel_name);
+	return -ENOSPC;
 }
 
 int unregister_kern_syscall_handler(char* kernel_name) {
-	int index, is_removed;
+	int index, kernel_index;
 
 	// Basic check
-	if (strlen(kernel_name) > MAX_KERNEL_NAME_LENGTH) {
-		return -EFAULT;
+	if (kernel_name[0] == 0 || strlen(kernel_name) > MAX_KERNEL_NAME_LENGTH) {
+		return -EINVAL;
 	}
 
 	// Find token spot
-	is_removed = 0;
-	printk("Removing handler for kernel: %s\n", kernel_name);
-	for(index = 0; index < MAX_KERNEL_SUPPORT; index++) {
-		if (strcmp(kernel_name, kernel_register[index].kernel_name) == 0) {
-			// Unregister handler
-			printk("Found kernel record at %d\n", index);
-			memset(kernel_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
-			kernel_register[index].kernel_syscall_handler = NULL;
-			kernel_register[index].is_direct = -1;
-			is_removed = 1;
-			break;
-		}
-	}
+	printk("unregister_kern_syscall_handler: Removing handler for kernel: %s\n", kernel_name);
+	kernel_index = get_kernel_index(kernel_name);
 
-	if (is_removed) {
+	if (kernel_index >= 0) {
+		// Unregister handler
+		printk("unregister_kern_syscall_handler: Found kernel record at index: %d\n", kernel_index);
+		memset(kernel_register[kernel_index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
+		kernel_register[kernel_index].kernel_syscall_handler = NULL;
+		kernel_register[kernel_index].is_direct = -1;
+
 		// Remove all registered threads
 		for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
-			if (strcmp(kernel_name, thread_register[index].kernel_name) == 0) {
+			if (thread_register[index].kernel_index == kernel_index) {
 				// Unregister thread
-				printk("Removing registered tgpid %d\n", thread_register[index].pgid);
-				memset(thread_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
+				printk("unregister_kern_syscall_handler: Removing registered thread pgid %d\n", thread_register[index].pgid);
+				thread_register[index].kernel_index = -1;
 				thread_register[index].pgid = -1;
 			}
 		}
+
+		return SUCCESS;
 	}
 
-	return is_removed ? SUCCESS:-EFAULT;
+	printk("unregister_kern_syscall_handler: Could not find entry for kernel: %s. Already removed?\n", kernel_name);
+	return -EINVAL;
 }
 
-static int register_thread(char* kernel_name, int pgid) {
-	int index, is_inserted = 0;
+static int register_thread(int kernel_index, int pgid) {
+	int index;
 
-	// Basic check
-	if (strlen(kernel_name) > MAX_KERNEL_NAME_LENGTH) {
-		return -EFAULT;
+	if (validate_kernel_index(kernel_index) < 0) {
+		printk("register_thread: Invalid kernel index %d", kernel_index);
+		return -EINVAL;
+	}
+
+	// Check if thread already registered
+	printk("register_thread: Registering thread: %u with kernel: %s\n", pgid, kernel_register[kernel_index].kernel_name);
+	for (index = 0; index < MAX_THREAD_SUPPORT; index++) {
+		if (thread_register[index].pgid == pgid) {
+			// Thread already registered. Must first be de-registered
+			printk("register_thread: Thread: %d already registered with kernel: %s. Unregister first.\n", pgid, kernel_register[thread_register[index].kernel_index].kernel_name);
+			return -EINVAL;
+		}
 	}
 
 	// Find empty spot
-	printk("Registering thread: %u with kernel: %s\n", pgid, kernel_name);
 	for (index = 0; index < MAX_THREAD_SUPPORT; index++) {
-		if (strlen(thread_register[index].kernel_name) == 0) {
+		if (thread_register[index].kernel_index == -1) {
 			// Register thread
-			printk("Found thread registration spot at %d\n", index);
-			strcpy(thread_register[index].kernel_name, kernel_name);
+			printk("register_thread: Found empty thread registration spot at %d\n", index);
+			thread_register[index].kernel_index = kernel_index;
 			thread_register[index].pgid = pgid;
-			is_inserted = 1;
-			break;
+			return SUCCESS;
 		}
 	}
 
-	return is_inserted ? SUCCESS:-EFAULT;
+	printk("register_thread: Failed to register thread: %d. Registry full?\n", pgid);
+	return -ENOSPC;
 }
 
-static int unregister_thread(char* kernel_name, int pgid) {
-	int index, is_removed;
-
-	// Basic check
-	if (strlen(kernel_name) > MAX_KERNEL_NAME_LENGTH) {
-		return -1;
-	}
+static int unregister_thread(int pgid) {
+	int index;
 
 	// Find token spot
-	is_removed = 0;
-	printk("De-registering thread: %u from kernel: %s\n", pgid, kernel_name);
+	printk("unregister_thread: Unregistering thread: %d\n", pgid);
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
-		if (strcmp(kernel_name, thread_register[index].kernel_name) == 0) {
+		if (thread_register[index].pgid == pgid) {
 			// Unregister thread
-			printk("Removing kernel info at index %d\n", index);
-			memset(thread_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
+			if (validate_kernel_index(thread_register[index].kernel_index) < 0) {
+				printk("unregister_thread: Invalid kernel index %d associated with thread %d. Cleaning up.\n", thread_register[index].kernel_index, pgid);
+			} else {
+				printk("unregister_thread: Unregistering thread %d from kernel %s\n", pgid, kernel_register[index].kernel_name);
+			}
+
+			thread_register[index].kernel_index = -1;
 			thread_register[index].pgid = -1;
-			is_removed = 1;
-			break;
+			return SUCCESS;
 		}
 	}
 
-	return is_removed ? SUCCESS:-EFAULT;
+	printk("unregister_thread: Failed to unregister thread: %d. Already unregistered?\n", pgid);
+	return -EINVAL;
+}
+
+static int allocate_cpu_for_kernel(int kernel_index) {
+	int index;
+
+	if (validate_kernel_index(kernel_index) < 0) {
+		printk("allocate_cpu_for_kernel: Invalid kernel index %d", kernel_index);
+		return -EINVAL;
+	}
+
+	// Find empty spot
+	printk("allocate_cpu_for_kernel: Allocating CPU for kernel: %s\n", kernel_register[kernel_index].kernel_name);
+	for (index = 0; index < MAX_CPU_SUPPORT; index++) {
+		if (cpu_register[index].kernel_index == -1) {
+			printk("allocate_cpu_for_kernel: Found free CPU: %d\n", index);
+			cpu_register[index].kernel_index = kernel_index;
+			return SUCCESS;
+		}
+	}
+
+	printk("allocate_cpu_for_kernel: Failed to allocate CPU for kernel: %s. Registry full?\n", kernel_register[kernel_index].kernel_name);
+	return -ENOSPC;
+}
+
+static int deallocate_cpu_for_kernel(int kernel_index) {
+	int cpu_index;
+
+	if (validate_kernel_index(kernel_index) < 0) {
+		printk("deallocate_cpu_for_kernel: Invalid kernel index %d. Cleaning up.", kernel_index);
+		return -EINVAL;
+	}
+
+	printk("deallocate_cpu_for_kernel: Removing CPU allocation for kernel: %s\n", kernel_register[kernel_index].kernel_name);
+
+	cpu_index = get_cpu_for_kernel_index(kernel_index);
+
+	if (cpu_index >= 0) {
+		// De-allocate CPU
+		printk("deallocate_cpu_for_kernel: Freeing CPU %d\n", cpu_index);
+		cpu_register[cpu_index].kernel_index = -1;
+		if (cpu_register[cpu_index].idle_pid != -1) {
+			printk("deallocate_cpu_for_kernel: Killing idle process for CPU %d\n", cpu_index);
+			// Actually kill the process
+		}
+		cpu_register[cpu_index].idle_pid = -1;
+		return SUCCESS;
+	}
+
+	printk("deallocate_cpu_for_kernel: Failed to deallocate CPU for kernel: %s. Already deallocated?\n", kernel_register[kernel_index].kernel_name);
+	return -EINVAL;
 }
 
 void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
-	int index, is_direct;
+	int index, is_direct, kernel_index, pgid;
 	kmux_kernel_syscall_handler kmux_sysenter_handler;
-	char kernel_name[MAX_KERNEL_NAME_LENGTH];
-	struct pid *pid = task_pgrp(current);
-	int pgid = pid->numbers[0].nr;
-	int current_cpu;
+	struct pid *pid;
 
-	// Get TSS from saved CPU variables
 	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
 	unsigned long *tss_ip_location = NULL;
 
-	current_cpu = get_cpu();
-
-	if (current_cpu != HOST_KERNEL_CPU) {
-		printk("Syscall: %lu executing on CPU %d. Pid: %d\n", regs->ax, get_cpu(), pgid);
-	}
+	// Obtain current process group ID
+	pid = task_pgrp(current);
+	pgid = pid->numbers[0].nr;
 
 	// If PGID is 0 then its the host kernel's process group. Skip such processes.
 	if (pgid == 0) {
-		kmux_sysenter_handler = (kmux_kernel_syscall_handler)ghost_sysenter_addr;
+		//kmux_sysenter_handler = (kmux_kernel_syscall_handler)ghost_sysenter_addr;
+		kernel_index = HOST_KERNEL_INDEX;
 		is_direct = 1;
 	} else {
 		for(index = 0; index < MAX_THREAD_SUPPORT; index++){
 			if (thread_register[index].pgid == pgid) {
-				strcpy(kernel_name, thread_register[index].kernel_name);
+				kernel_index = thread_register[index].kernel_index;
 				break;
 			}
 		}
 
 		if (index == MAX_THREAD_SUPPORT) {
 			// Thread not registered. Host OS will handle? Or should we return -EFAULT
-			kmux_sysenter_handler = (kmux_kernel_syscall_handler)ghost_sysenter_addr;
+			kernel_index = HOST_KERNEL_INDEX;
 			is_direct = 1;
-		} else {
-			// Thread is registered. Look up kernel
-			for(index = 0; index < MAX_KERNEL_SUPPORT; index++){
-				if (strcmp(kernel_name, kernel_register[index].kernel_name) == 0) {
-					//printk("Retrieving kernel info at index: %d\n", index);
-					kmux_sysenter_handler = kernel_register[index].kernel_syscall_handler;
-					is_direct = kernel_register[index].is_direct;
-					break;
-				}
-			}
-
-			if (index == MAX_KERNEL_SUPPORT) {
-				// Something went wrong, thread was registered but kernel not found
-				printk("Failed to locate kernel %s requested by thread %d", kernel_name, pgid);
-				kmux_sysenter_handler = (kmux_kernel_syscall_handler)ghost_sysenter_addr;
-				is_direct = 1;
-			}
 		}
 	}
+
+	if (kernel_index < 0 || kernel_index > MAX_KERNEL_SUPPORT || is_direct < 0 || is_direct > 1) {
+		kernel_index = HOST_KERNEL_INDEX;
+		is_direct = 1;
+	}
+
+	kmux_sysenter_handler = kernel_register[kernel_index].kernel_syscall_handler;
 
 	cpu_x86_tss = &get_cpu_var(gx86_tss);
 	cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
@@ -298,8 +343,7 @@ static void hw_int_reset(void *host_sysenter_addr) {
 
 /* Proc Functions */
 
-static int kmux_open(struct inode *inode, struct file *file)
-{
+static int kmux_open(struct inode *inode, struct file *file) {
 	if (device_open)
 		return -EBUSY;
 
@@ -308,14 +352,12 @@ static int kmux_open(struct inode *inode, struct file *file)
 	try_module_get(THIS_MODULE);
 
 	printk("kmux proc opened.\n");
-
 	return SUCCESS;
 }
 
-static int kmux_release(struct inode *inode, struct file *file)
-{
+static int kmux_release(struct inode *inode, struct file *file) {
 	if (!device_open)
-		return -EFAULT;
+		return -EIO;
 
 	device_open--;
 
@@ -326,43 +368,57 @@ static int kmux_release(struct inode *inode, struct file *file)
 }
 
 static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg) {
-	int ret = 0;
-
 	switch(cmd) {
 		case KMUX_REGISTER_THREAD:
 		{
 			thread_entry thread_info;
-			int is_registered = 0;
 
 			printk("Performing thread register ioctl.\n");
 			if (copy_from_user(&thread_info, (void*)arg, sizeof(thread_entry))) {
 				printk("Error copying thread information from user space.\n");
-				ret = -EFAULT;
+				return -EFAULT;
 			}
 
-			is_registered = register_thread(thread_info.kernel_name, thread_info.pgid);
-			return is_registered;
+			return register_thread(thread_info.kernel_index, thread_info.pgid);
 		}
 		case KMUX_UNREGISTER_THREAD:
 		{
 			thread_entry thread_info;
-			int is_unregistered = 0;
 
 			printk("Performing thread unregister ioctl.\n");
 			if (copy_from_user(&thread_info, (void*)arg, sizeof(thread_entry))) {
 				printk("Error copying thread information from user space.\n");
-				ret = -EFAULT;
+				return -EFAULT;
 			}
 
-			is_unregistered = unregister_thread(thread_info.kernel_name, thread_info.pgid);
-			return is_unregistered;
+			return unregister_thread(thread_info.pgid);
+		}
+		case KMUX_IOCTL_CMD_GET_KERNEL_INDEX:
+		{
+			char kernel_name[MAX_KERNEL_NAME_LENGTH];
+
+			printk("Performing kernel index retrieval ioctl.\n");
+			if (copy_from_user(&kernel_name, (void*)arg, MAX_KERNEL_NAME_LENGTH)) {
+				printk("Error copying kernel name from user space.\n");
+				return -EFAULT;
+			}
+
+			return get_kernel_index(kernel_name);
+		}
+		case KMUX_IOCTL_CMD_GET_KERNEL_CPU:
+		{
+			if (validate_kernel_index(arg) < 0) {
+				return -EFAULT;
+			}
+
+			return get_cpu_for_kernel_index(arg);
 		}
 		default:
+		{
 			printk("Invalid kmux ioctl command: %u\n", cmd);
 			return -EFAULT;
+		}
 	}
-
-	return ret;
 }
 
 static struct file_operations proc_kmux_fops = {
@@ -452,13 +508,13 @@ static int __init kmux_init(void) {
 	}
 
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
-		memset(thread_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
+		thread_register[index].kernel_index = -1;
 		thread_register[index].pgid = -1;
 	}
 
 	for(index = 0; index < MAX_CPU_SUPPORT; index++) {
 		cpu_register[index].kernel_index = -1;
-		cpu_register[index].idle_thread_created = -1;
+		cpu_register[index].idle_pid = -1;
 	}
 
 	host_sysenter_addr = hw_int_init();
@@ -469,8 +525,7 @@ static int __init kmux_init(void) {
 	// Default kernel has to be at HOST_KERNEL_INDEX
 	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, 1);
 
-	cpu_register[HOST_KERNEL_CPU].kernel_index = HOST_KERNEL_INDEX;
-	cpu_register[HOST_KERNEL_CPU].idle_thread_created = 0;
+	allocate_cpu_for_kernel(HOST_KERNEL_INDEX);
 
 	// Load TSS locations for current CPU
 	load_cpu_tss_locations(NULL);

@@ -14,9 +14,13 @@
 
 #define KMUX_IOCTL_CMD_REGISTER_THREAD 1
 #define KMUX_IOCTL_CMD_UNREGISTER_THREAD 2
+#define KMUX_IOCTL_CMD_GET_KERNEL_INDEX 3
+#define KMUX_IOCTL_CMD_GET_KERNEL_CPU 4
 
 #define KMUX_REGISTER_THREAD _IOR(0, KMUX_IOCTL_CMD_REGISTER_THREAD, unsigned long)
 #define KMUX_UNREGISTER_THREAD _IOR(0, KMUX_IOCTL_CMD_UNREGISTER_THREAD, unsigned long)
+#define KMUX_GET_KERNEL_INDEX _IOR(0, KMUX_IOCTL_CMD_GET_KERNEL_INDEX, unsigned long)
+#define KMUX_GET_KERNEL_CPU _IOR(0, KMUX_IOCTL_CMD_GET_KERNEL_CPU, unsigned long)
 
 #define DEFAULT_KERNEL_NAME "linux"
 
@@ -36,7 +40,7 @@ struct kernel_entry {
 typedef struct kernel_entry kernel_entry;
 
 struct thread_entry {
-	char kernel_name[MAX_KERNEL_NAME_LENGTH];
+	int kernel_index;
 	int pgid;
 };
 
@@ -44,7 +48,7 @@ typedef struct thread_entry thread_entry;
 
 struct cpu_entry {
 	int kernel_index;
-	int idle_thread_created;
+	int idle_pid;
 };
 
 typedef struct cpu_entry cpu_entry;
