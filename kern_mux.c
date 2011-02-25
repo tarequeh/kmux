@@ -18,7 +18,6 @@
 #include "kern_mux.h"
 
 #define MODULE_NAME "kernel_multiplexer"
-#define HOST_KERNEL_CPU 0
 #define HOST_KERNEL_INDEX 0
 
 // Needs to be replaced with semaphore
@@ -207,6 +206,7 @@ static int unregister_thread(int pgid) {
 	return -EINVAL;
 }
 
+// TODO: Take CPU as input. Allocate if available. Return error if not
 static int allocate_cpu_for_kernel(int kernel_index) {
 	int index;
 
@@ -523,7 +523,7 @@ static int __init kmux_init(void) {
 	printk("Current host sysenter handler: %p\n", host_sysenter_addr);
 
 	// Default kernel has to be at HOST_KERNEL_INDEX
-	register_kern_syscall_handler(DEFAULT_KERNEL_NAME, host_sysenter_addr, 1);
+	register_kern_syscall_handler(KMUX_DEFAULT_KERNEL_NAME, host_sysenter_addr, 1);
 
 	allocate_cpu_for_kernel(HOST_KERNEL_INDEX);
 

@@ -22,7 +22,9 @@
 #define KMUX_GET_KERNEL_INDEX _IOR(0, KMUX_IOCTL_CMD_GET_KERNEL_INDEX, unsigned long)
 #define KMUX_GET_KERNEL_CPU _IOR(0, KMUX_IOCTL_CMD_GET_KERNEL_CPU, unsigned long)
 
-#define DEFAULT_KERNEL_NAME "linux"
+#define KMUX_HOST_KERNEL_CPU 0
+
+#define KMUX_DEFAULT_KERNEL_NAME "linux"
 
 #define SUCCESS 0
 
