@@ -273,7 +273,6 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	if (pgid == 0) {
 		//kmux_sysenter_handler = (kmux_kernel_syscall_handler)ghost_sysenter_addr;
 		kernel_index = HOST_KERNEL_INDEX;
-		is_direct = 1;
 	} else {
 		for(index = 0; index < MAX_THREAD_SUPPORT; index++){
 			if (thread_register[index].pgid == pgid) {
@@ -283,15 +282,15 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 		}
 
 		if (index == MAX_THREAD_SUPPORT) {
-			// Thread not registered. Host OS will handle? Or should we return -EFAULT
+			// Thread not registered. Host OS will handle.
 			kernel_index = HOST_KERNEL_INDEX;
-			is_direct = 1;
 		}
 	}
 
+	is_direct = kernel_register[kernel_index].is_direct;
+
 	if (kernel_index < 0 || kernel_index > MAX_KERNEL_SUPPORT || is_direct < 0 || is_direct > 1) {
 		kernel_index = HOST_KERNEL_INDEX;
-		is_direct = 1;
 	}
 
 	kmux_sysenter_handler = kernel_register[kernel_index].kernel_syscall_handler;
