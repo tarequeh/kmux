@@ -1,3 +1,4 @@
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,8 +9,6 @@
 #include <sys/resource.h>  /* rlimit     */
 
 #include "../kern_mux.h"
-
-/* ------------------------- */
 
 /* Priority setting and idling functions */
 
@@ -162,82 +161,149 @@ static int unregister_kernel_cpu(int proc_desc, cpu_registration_entry *cpu_regi
 	return ret_val;
 }
 
-void initialize_kiwi(void) {
-	// Set affinity of this utility to CPU dedicated to Linux
-	pid_t kiwi_pid = getpid();
-	set_cpu_affinity(kiwi_pid, KMUX_HOST_KERNEL_CPU);
+static void free_dentlist(struct dirent **dentlist, const int ndirs) {
+    int index;
 
-	// TODO: Change affinity of all currently running processes
+    for (index = 0; index < ndirs; index++)
+        free(dentlist[index]);
+    free(dentlist);
+}
+
+static int switch_cpu_for_current_processes(void){
+    struct dirent **dentlist;
+    struct dirent *dentp;
+    pid_t pid;
+    int ndirs, index, errno;
+
+    errno = 0;
+    ndirs = scandir("/proc", &dentlist, NULL, NULL);
+
+    if (ndirs == -1) {
+        printf("Error reading process list");
+        return -1;
+    }
+
+    for (index = 0; index < ndirs; index++) {
+        dentp = dentlist[index];
+        if (dentp->d_name[0] == '.') {
+            continue;           /* skip `.' and `..' */
+        }
+
+        errno = 0;
+        pid = (pid_t)strtol(dentp->d_name, (char**)NULL, 10);
+        if (pid <= 0 || errno) {
+            continue;           /* not a /proc/<pid> */
+        }
+
+        set_cpu_affinity(pid, KMUX_HOST_KERNEL_CPU);
+    }
+
+    free_dentlist(dentlist, ndirs);
+    return 0;
+}
+
+
+void initialize_kmuxregistrar(void) {
+	// Set affinity of this utility to CPU dedicated to Linux
+	pid_t kmuxregistrar_pid = getpid();
+	set_cpu_affinity(kmuxregistrar_pid, KMUX_HOST_KERNEL_CPU);
+
+	switch_cpu_for_current_processes();
 }
 
 // TODO: Create a loop that shows a prompt and waits for user input
 // TODO: Check for unregistered kernels every time a command comes in and get rid of idle loops
 int main(int argc, char *argv[]) {
-	initialize_kiwi();
+    initialize_kmuxregistrar();
 
-	char proc_path[50], kernel_name[MAX_KERNEL_NAME_LENGTH];
-	int kmux_command, proc_desc, ret_val, kernel_index;
-	int pgid;
-	thread_entry *thread_info = (thread_entry*)malloc(sizeof(thread_entry));
+    char proc_path[50], kernel_name[MAX_KERNEL_NAME_LENGTH];
+    int kmux_command, proc_desc, ret_val, kernel_index;
+    int pgid, cpu;
+    thread_entry *thread_info;
+    cpu_registration_entry *cpu_registration_info;
 
-	ret_val = sprintf(proc_path, "/proc/%s", KMUX_PROC_NAME);
+    ret_val = sprintf(proc_path, "/proc/%s", KMUX_PROC_NAME);
 
-	// Sanitize input
-	if (argc != 4) {
-		printf("Usage: threadregistrar command kernel_name, pgid");
-		exit(-1);
-	}
+    // Sanitize input
+    if (argc != 4) {
+        printf("Usage: threadregistrar command kernel_name, pgid/cpu");
+        exit(-1);
+    }
 
-	if (strlen(argv[1]) > 1) {
-		printf("Invalid kmux command: %s", argv[2]);
-		exit(-1);
-	} else {
-		kmux_command = atoi(argv[1]);
-		if (!kmux_command || (kmux_command != KMUX_IOCTL_CMD_REGISTER_THREAD && kmux_command != KMUX_IOCTL_CMD_UNREGISTER_THREAD)) {
-			printf("Invalid kmux command: %s", argv[1]);
-			exit(-1);
-		}
-	}
+    if (strlen(argv[1]) > 1) {
+        printf("Invalid kmux command: %s", argv[2]);
+        exit(-1);
+    } else {
+        kmux_command = atoi(argv[1]);
+        if (!kmux_command || kmux_command < KMUX_IOCTL_CMD_REGISTER_THREAD || kmux_command > KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU) {
+            printf("Invalid kmux command: %s", argv[1]);
+            exit(-1);
+        }
+    }
 
-	if (strlen(argv[2]) > 50) {
-		printf("Kernel name too long: %s", argv[1]);
-		exit(-1);
-	} else {
-		strcpy(kernel_name, argv[2]);
-	}
+    if (strlen(argv[2]) > 50) {
+        printf("Kernel name too long: %s", argv[1]);
+        exit(-1);
+    } else {
+        strcpy(kernel_name, argv[2]);
+    }
 
-	pgid = atol(argv[3]);
-	if (!pgid) {
-		printf("Invalid thread ID: %s", argv[3]);
-		exit(-1);
-	}
+    printf("kmux command: %d\n", kmux_command);
+    printf("Kernel name: %s\n", kernel_name);
 
-	printf("kmux command: %d\n", kmux_command);
-	printf("Kernel name: %s\n", kernel_name);
-	printf("PGID: %d\n", pgid);
+    proc_desc = open(proc_path, O_RDONLY);
+    if (proc_desc < 0) {
+        printf("Can't open proc: %s\n", KMUX_PROC_NAME);
+        exit(-1);
+    }
 
-	proc_desc = open(proc_path, O_RDONLY);
-	if (proc_desc < 0) {
-		printf("Can't open proc: %s\n", KMUX_PROC_NAME);
-		exit(-1);
-	}
+    kernel_index = get_kernel_index(proc_desc, kernel_name);
+    if (kernel_index < 0) {
+        printf("Invalid kernel name: %s\n", kernel_name);
+        exit(-1);
+    }
 
-	kernel_index = get_kernel_index(proc_desc, kernel_name);
-	if (kernel_index < 0) {
-		printf("Invalid kernel name: %s\n", kernel_name);
-		exit(-1);
-	}
+    if (kmux_command == KMUX_IOCTL_CMD_REGISTER_THREAD || kmux_command == KMUX_IOCTL_CMD_UNREGISTER_THREAD) {
+        pgid = atol(argv[3]);
+        if (!pgid) {
+            printf("Invalid thread ID: %s", argv[3]);
+            exit(-1);
+        }
 
-	thread_info->kernel_index = kernel_index;
-	thread_info->pgid = pgid;
+        printf("PGID: %d\n", pgid);
+        thread_info = (thread_entry*)malloc(sizeof(thread_entry));
 
-	if (kmux_command == KMUX_IOCTL_CMD_REGISTER_THREAD) {
-		register_thread(proc_desc, thread_info);
-	} else {
-		unregister_thread(proc_desc, thread_info);
-	}
+        thread_info->kernel_index = kernel_index;
+        thread_info->pgid = pgid;
 
-	close(proc_desc);
+        if (kmux_command == KMUX_IOCTL_CMD_REGISTER_THREAD) {
+            register_thread(proc_desc, thread_info);
+        } else {
+            unregister_thread(proc_desc, thread_info);
+        }
+        free(thread_info);
+    } else if (kmux_command == KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU || kmux_command == KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU) {
+        cpu = atol(argv[3]);
+        if (!cpu) {
+            printf("Invalid CPU: %s", argv[3]);
+            exit(-1);
+        }
 
-	return 0;
+        printf("CPU: %d\n", cpu);
+        cpu_registration_info = (cpu_registration_entry *)malloc(sizeof(cpu_registration_entry));
+
+        cpu_registration_info->kernel_index = kernel_index;
+        cpu_registration_info->cpu = cpu;
+
+        if (kmux_command == KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU) {
+            register_kernel_cpu(proc_desc, cpu_registration_info);
+        } else {
+            unregister_kernel_cpu(proc_desc, cpu_registration_info);
+        }
+        free(cpu_registration_info);
+    }
+
+    close(proc_desc);
+
+    return 0;
 }
