@@ -18,7 +18,7 @@
 #include "kern_mux.h"
 
 #define MODULE_NAME "kernel_multiplexer"
-#define HOST_KERNEL_INDEX 0
+#define KMUX_HOST_KERNEL_INDEX 0
 
 // Needs to be replaced with semaphore
 static int device_open = 0;
@@ -207,54 +207,60 @@ static int unregister_thread(int pgid) {
 }
 
 // TODO: Take CPU as input. Allocate if available. Return error if not
-static int allocate_cpu_for_kernel(int kernel_index) {
+static int register_kernel_cpu(int kernel_index, int cpu) {
+	if (validate_kernel_index(kernel_index) < 0) {
+		printk("register_kernel_cpu: Invalid kernel index %d", kernel_index);
+		return -EINVAL;
+	}
+
+	if (cpu < 0 || cpu > MAX_CPU_SUPPORT) {
+		printk("register_kernel_cpu: Invalid CPU %d", cpu);
+		return -EINVAL;
+	}
+
+	if (cpu_register[cpu].kernel_index != -1) {
+		printk("register_kernel_cpu: Requested CPU is already registered");
+		return -EEXIST;
+	}
+
+	printk("register_kernel_cpu: Allocating CPU %d for kernel: %s\n", cpu, kernel_register[kernel_index].kernel_name);
+	cpu_register[cpu].kernel_index = kernel_index;
+	return SUCCESS;
+}
+
+static int unregister_kernel_cpu(int kernel_index, int cpu) {
 	int index;
 
 	if (validate_kernel_index(kernel_index) < 0) {
-		printk("allocate_cpu_for_kernel: Invalid kernel index %d", kernel_index);
+		printk("unregister_kernel_cpu: Invalid kernel index %d. Cleaning up.", kernel_index);
 		return -EINVAL;
 	}
 
-	// Find empty spot
-	printk("allocate_cpu_for_kernel: Allocating CPU for kernel: %s\n", kernel_register[kernel_index].kernel_name);
-	for (index = 0; index < MAX_CPU_SUPPORT; index++) {
-		if (cpu_register[index].kernel_index == -1) {
-			printk("allocate_cpu_for_kernel: Found free CPU: %d\n", index);
-			cpu_register[index].kernel_index = kernel_index;
+	if (cpu < 0 || cpu > MAX_CPU_SUPPORT) {
+		printk("unregister_kernel_cpu: Invalid CPU %d", cpu);
+		return -EINVAL;
+	}
+
+	if (cpu == -1) { // Unregister all CPU for given kernel
+		for (index = 0; index < MAX_CPU_SUPPORT; index++) {
+			if (cpu_register[index].kernel_index == kernel_index) {
+				printk("unregister_kernel_cpu: Unregistering CPU %d from kernel: %s\n", cpu, kernel_register[kernel_index].kernel_name);
+				cpu_register[index].kernel_index = -1;
+				cpu_register[index].idle_pid = -1;
+			}
+		}
+		return SUCCESS;
+	} else {
+		if (cpu_register[cpu].kernel_index != kernel_index) {
+			printk("unregister_kernel_cpu: CPU %d is not registered with kernel: %s", cpu, kernel_register[kernel_index].kernel_name);
+			return -EINVAL;
+		} else {
+			printk("unregister_kernel_cpu: Unregistering CPU %d from kernel: %s\n", cpu, kernel_register[kernel_index].kernel_name);
+			cpu_register[cpu].kernel_index = -1;
+			cpu_register[cpu].idle_pid = -1;
 			return SUCCESS;
 		}
 	}
-
-	printk("allocate_cpu_for_kernel: Failed to allocate CPU for kernel: %s. Registry full?\n", kernel_register[kernel_index].kernel_name);
-	return -ENOSPC;
-}
-
-static int deallocate_cpu_for_kernel(int kernel_index) {
-	int cpu_index;
-
-	if (validate_kernel_index(kernel_index) < 0) {
-		printk("deallocate_cpu_for_kernel: Invalid kernel index %d. Cleaning up.", kernel_index);
-		return -EINVAL;
-	}
-
-	printk("deallocate_cpu_for_kernel: Removing CPU allocation for kernel: %s\n", kernel_register[kernel_index].kernel_name);
-
-	cpu_index = get_cpu_for_kernel_index(kernel_index);
-
-	if (cpu_index >= 0) {
-		// De-allocate CPU
-		printk("deallocate_cpu_for_kernel: Freeing CPU %d\n", cpu_index);
-		cpu_register[cpu_index].kernel_index = -1;
-		if (cpu_register[cpu_index].idle_pid != -1) {
-			printk("deallocate_cpu_for_kernel: Killing idle process for CPU %d\n", cpu_index);
-			// Actually kill the process
-		}
-		cpu_register[cpu_index].idle_pid = -1;
-		return SUCCESS;
-	}
-
-	printk("deallocate_cpu_for_kernel: Failed to deallocate CPU for kernel: %s. Already deallocated?\n", kernel_register[kernel_index].kernel_name);
-	return -EINVAL;
 }
 
 void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
@@ -272,7 +278,7 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	// If PGID is 0 then its the host kernel's process group. Skip such processes.
 	if (pgid == 0) {
 		//kmux_sysenter_handler = (kmux_kernel_syscall_handler)ghost_sysenter_addr;
-		kernel_index = HOST_KERNEL_INDEX;
+		kernel_index = KMUX_HOST_KERNEL_INDEX;
 	} else {
 		for(index = 0; index < MAX_THREAD_SUPPORT; index++){
 			if (thread_register[index].pgid == pgid) {
@@ -283,14 +289,14 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 
 		if (index == MAX_THREAD_SUPPORT) {
 			// Thread not registered. Host OS will handle.
-			kernel_index = HOST_KERNEL_INDEX;
+			kernel_index = KMUX_HOST_KERNEL_INDEX;
 		}
 	}
 
 	is_direct = kernel_register[kernel_index].is_direct;
 
 	if (kernel_index < 0 || kernel_index > MAX_KERNEL_SUPPORT || is_direct < 0 || is_direct > 1) {
-		kernel_index = HOST_KERNEL_INDEX;
+		kernel_index = KMUX_HOST_KERNEL_INDEX;
 	}
 
 	kmux_sysenter_handler = kernel_register[kernel_index].kernel_syscall_handler;
@@ -404,13 +410,29 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 
 			return get_kernel_index(kernel_name);
 		}
-		case KMUX_IOCTL_CMD_GET_KERNEL_CPU:
+		case KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU:
 		{
-			if (validate_kernel_index(arg) < 0) {
+			cpu_registration_entry cpu_registration_info;
+
+			printk("Performing kernel cpu registration ioctl.\n");
+			if (copy_from_user(&cpu_registration_info, (void*)arg, sizeof(cpu_registration_entry))) {
+				printk("Error copying cpu registration information from user space.\n");
 				return -EFAULT;
 			}
 
-			return get_cpu_for_kernel_index(arg);
+			return register_kernel_cpu(cpu_registration_info.kernel_index, cpu_registration_info.cpu);
+		}
+		case KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU:
+		{
+			cpu_registration_entry cpu_registration_info;
+
+			printk("Performing kernel cpu unregister ioctl.\n");
+			if (copy_from_user(&cpu_registration_info, (void*)arg, sizeof(cpu_registration_entry))) {
+				printk("Error copying cpu registration information from user space.\n");
+				return -EFAULT;
+			}
+
+			return unregister_kernel_cpu(cpu_registration_info.kernel_index, cpu_registration_info.cpu);
 		}
 		default:
 		{
@@ -521,10 +543,10 @@ static int __init kmux_init(void) {
 
 	printk("Current host sysenter handler: %p\n", host_sysenter_addr);
 
-	// Default kernel has to be at HOST_KERNEL_INDEX
+	// Default kernel has to be at KMUX_HOST_KERNEL_INDEX
 	register_kern_syscall_handler(KMUX_DEFAULT_KERNEL_NAME, host_sysenter_addr, 1);
 
-	allocate_cpu_for_kernel(HOST_KERNEL_INDEX);
+	register_kernel_cpu(KMUX_HOST_KERNEL_INDEX, KMUX_HOST_KERNEL_CPU);
 
 	// Load TSS locations for current CPU
 	load_cpu_tss_locations(NULL);
@@ -549,6 +571,9 @@ static void __exit kmux_exit(void) {
 	reset_cpu_sysenter_handler(NULL);
 	smp_call_function(reset_cpu_sysenter_handler, NULL, 1);
 	remove_proc_entry(KMUX_PROC_NAME, NULL);
+
+	unregister_kernel_cpu(KMUX_HOST_KERNEL_INDEX, KMUX_HOST_KERNEL_CPU);
+	unregister_kern_syscall_handler(KMUX_DEFAULT_KERNEL_NAME);
 
 	printk("Uninstalling the Kernel Multiplexer module.\n");
 	printk("#~~~~~~~~~~~~~~~~~~~~~ kmux DEBUG END ~~~~~~~~~~~~~~~~~~~~~#\n");

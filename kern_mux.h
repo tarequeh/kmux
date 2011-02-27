@@ -15,12 +15,14 @@
 #define KMUX_IOCTL_CMD_REGISTER_THREAD 1
 #define KMUX_IOCTL_CMD_UNREGISTER_THREAD 2
 #define KMUX_IOCTL_CMD_GET_KERNEL_INDEX 3
-#define KMUX_IOCTL_CMD_GET_KERNEL_CPU 4
+#define KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU 4
+#define KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU 5
 
 #define KMUX_REGISTER_THREAD _IOR(0, KMUX_IOCTL_CMD_REGISTER_THREAD, unsigned long)
 #define KMUX_UNREGISTER_THREAD _IOR(0, KMUX_IOCTL_CMD_UNREGISTER_THREAD, unsigned long)
 #define KMUX_GET_KERNEL_INDEX _IOR(0, KMUX_IOCTL_CMD_GET_KERNEL_INDEX, unsigned long)
-#define KMUX_GET_KERNEL_CPU _IOR(0, KMUX_IOCTL_CMD_GET_KERNEL_CPU, unsigned long)
+#define KMUX_REGISTER_KERNEL_CPU _IOR(0, KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU, unsigned long)
+#define KMUX_UNREGISTER_KERNEL_CPU _IOR(0, KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU, unsigned long)
 
 #define KMUX_HOST_KERNEL_CPU 0
 
@@ -54,5 +56,12 @@ struct cpu_entry {
 };
 
 typedef struct cpu_entry cpu_entry;
+
+struct cpu_registration_entry {
+	int kernel_index;
+	int cpu;
+};
+
+typedef struct cpu_registration_entry cpu_registration_entry;
 
 #endif

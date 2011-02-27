@@ -21,7 +21,7 @@ static int call_getrlimit(int id, char *name)
 		printf("Error getting priority limit for %s\n", name);
 		return -1;
 	}
-	printk("rlimit for %s is %d:%d (Infinity: %d)\n", name, (int)rl.rlim_cur, (int)rl.rlim_max, (int)RLIM_INFINITY);
+	printf("rlimit for %s is %d:%d (Infinity: %d)\n", name, (int)rl.rlim_cur, (int)rl.rlim_max, (int)RLIM_INFINITY);
 }
 
 static int call_setrlimit(int id, unsigned long cur, unsigned long max) {
@@ -35,7 +35,7 @@ static int call_setrlimit(int id, unsigned long cur, unsigned long max) {
 	}
 }
 
-void set_high_priority(pid_t pid, int is_idle) {
+int set_high_priority(pid_t pid, int is_idle) {
 	struct sched_param sp;
 	unsigned long max_limit = RLIM_INFINITY - is_idle;
 
@@ -63,19 +63,22 @@ void set_high_priority(pid_t pid, int is_idle) {
 		printf("Error retrieving schedule parameters\n");
 	}
 
-	assert(sp.sched_priority == sched_get_priority_max(SCHED_RR));
+	if (sp.sched_priority != sched_get_priority_max(SCHED_RR)) {
+		printf("Scheduler mode was not correctly set to Round Robin\n");
+		return -1;
+	}
 
-	return;
+	return 0;
 }
 
 static int set_cpu_affinity(pid_t pid, int cpu) {
 	int retval;
 	cpu_set_t *set = (cpu_set_t *)malloc(sizeof(cpu_set_t));
 	CPU_ZERO(set);
-	CPU_SET(set, cpu);
+	CPU_SET(cpu, set);
 	retval = sched_setaffinity(pid, sizeof(cpu_set_t), set);
 	if (retval < 0) {
-		printf("Could not set affinity of PID: %d with CPU: %d\n", (int)pid_t, cpu);
+		printf("Could not set affinity of PID: %d with CPU: %d\n", pid, cpu);
 	}
 }
 
@@ -99,7 +102,7 @@ static pid_t spawn_idle_thread(int cpu) {
 
 // ------------------------- */
 
-static int register_thread(int proc_desc, thread_register *thread_info) {
+static int register_thread(int proc_desc, thread_entry *thread_info) {
 	int ret_val;
 
 	if ((ret_val = ioctl(proc_desc, KMUX_REGISTER_THREAD, thread_info)) < 0) {
@@ -111,7 +114,7 @@ static int register_thread(int proc_desc, thread_register *thread_info) {
 	return ret_val;
 }
 
-static int unregister_thread(int proc_desc, thread_register *thread_info) {
+static int unregister_thread(int proc_desc, thread_entry *thread_info) {
  	int ret_val;
 
 	if ((ret_val = ioctl(proc_desc, KMUX_UNREGISTER_THREAD, thread_info)) < 0) {
@@ -124,6 +127,8 @@ static int unregister_thread(int proc_desc, thread_register *thread_info) {
 }
 
 static int get_kernel_index(int proc_desc, char *kernel_name) {
+	int ret_val;
+
 	if ((ret_val = ioctl(proc_desc, KMUX_GET_KERNEL_INDEX, kernel_name)) < 0) {
 		printf("Could not get kernel index. ioctl returned %d\n", ret_val);
 		return -1;
@@ -133,13 +138,27 @@ static int get_kernel_index(int proc_desc, char *kernel_name) {
 	return ret_val;
 }
 
-static int get_kernel_cpu(int proc_desc, int kernel_index) {
-	if ((ret_val = ioctl(proc_desc, KMUX_GET_KERNEL_CPU, kernel_index)) < 0) {
-		printf("Could not get kernel cpu. ioctl returned %d\n", ret_val);
+static int register_kernel_cpu(int proc_desc, cpu_registration_entry *cpu_registration_info) {
+	int ret_val;
+
+	if ((ret_val = ioctl(proc_desc, KMUX_REGISTER_KERNEL_CPU, cpu_registration_info)) < 0) {
+		printf("Could not register kernel cpu. ioctl returned %d\n", ret_val);
 		return -1;
 	}
 
-	printf("Performed kernel cpu retrieval ioctl. Return value: %d\n", ret_val);
+	printf("Performed kernel cpu registration ioctl. Return value: %d\n", ret_val);
+	return ret_val;
+}
+
+static int unregister_kernel_cpu(int proc_desc, cpu_registration_entry *cpu_registration_info) {
+	int ret_val;
+
+	if ((ret_val = ioctl(proc_desc, KMUX_UNREGISTER_KERNEL_CPU, cpu_registration_info)) < 0) {
+		printf("Could not unregister kernel cpu. ioctl returned %d\n", ret_val);
+		return -1;
+	}
+
+	printf("Performed kernel cpu unregistering ioctl. Return value: %d\n", ret_val);
 	return ret_val;
 }
 
@@ -154,10 +173,12 @@ void initialize_kiwi(void) {
 // TODO: Create a loop that shows a prompt and waits for user input
 // TODO: Check for unregistered kernels every time a command comes in and get rid of idle loops
 int main(int argc, char *argv[]) {
+	initialize_kiwi();
+
 	char proc_path[50], kernel_name[MAX_KERNEL_NAME_LENGTH];
 	int kmux_command, proc_desc, ret_val, kernel_index;
 	int pgid;
-	thread_register *thread_info = (thread_register*)malloc(sizeof(thread_register));
+	thread_entry *thread_info = (thread_entry*)malloc(sizeof(thread_entry));
 
 	ret_val = sprintf(proc_path, "/proc/%s", KMUX_PROC_NAME);
 
