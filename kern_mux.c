@@ -45,7 +45,7 @@ int get_kernel_index(char *kernel_name) {
 	}
 
 	for(index = 0; index < MAX_KERNEL_SUPPORT; index++) {
-		if (memcmp(kernel_name, kernel_register[index].kernel_name, MAX_KERNEL_NAME_LENGTH) == 0) {
+		if (strcmp(kernel_name, kernel_register[index].kernel_name) == 0) {
 			return index;
 		}
 	}
@@ -63,18 +63,6 @@ static int validate_kernel_index(int kernel_index) {
 	}
 
 	return SUCCESS;
-}
-
-static int get_cpu_for_kernel_index(int kernel_index) {
-	int index;
-
-	for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
-		if (cpu_register[index].kernel_index == kernel_index) {
-			return index;
-		}
-	}
-
-	return -EINVAL;
 }
 
 /* kmux API functions */
