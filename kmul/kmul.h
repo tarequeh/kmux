@@ -10,4 +10,6 @@ int unregister_kernel_cpu(int proc_desc, char *kernel_name, int cpu);
 
 int switch_cpu_for_current_processes(void);
 
+static int get_total_cpus(void);
+
 #endif

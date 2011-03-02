@@ -9,6 +9,8 @@
 #include "../kern_mux.h"
 #include "kmul.h"
 
+#define MAX_BUFF 100
+
 /* Priority setting and idling functions */
 
 static int call_getrlimit(int id, char *name)
@@ -98,6 +100,27 @@ static pid_t spawn_idle_thread(int cpu) {
     }
 }
 
+static int get_total_cpus(void) {
+    FILE *pfile;
+    char buffer[MAX_BUFF];
+    int cpu_count = 0;
+
+    if ((pfile = fopen( "/proc/cpuinfo", "r")) == NULL) {
+        perror( "fopen" );
+        return (-1);
+    }
+
+
+    while (fgets(buffer, MAX_BUFF, pfile) != NULL) {
+        if (strstr(buffer, "processor") == buffer) {
+            cpu_count++;
+        }
+    }
+
+    fclose(pfile);
+    return cpu_count;
+}
+
 /* kmux interfacing functions */
 
 static int get_kernel_index(int proc_desc, char *kernel_name) {
@@ -162,6 +185,11 @@ int register_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
     int ret_val, kernel_index;
     cpu_registration_entry * cpu_registration_info;
 
+    if (cpu < 0 || cpu >= get_total_cpus()) {
+        printf("Invalid CPU: %d\n", cpu);
+        return -1;
+    }
+
     if ((kernel_index = get_kernel_index(proc_desc, kernel_name)) < 0) {
         printf("Invalid kernel name: %s\n", kernel_name);
         return kernel_index;
@@ -184,6 +212,11 @@ int register_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
 int unregister_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
     int ret_val, kernel_index;
     cpu_registration_entry * cpu_registration_info;
+
+    if (cpu < 0 || cpu >= get_total_cpus()) {
+        printf("Invalid CPU: %d\n", cpu);
+        return -1;
+    }
 
     if ((ret_val = kernel_index = get_kernel_index(proc_desc, kernel_name)) < 0) {
         printf("Invalid kernel name: %s\n", kernel_name);
