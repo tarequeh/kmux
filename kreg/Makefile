@@ -1,4 +1,8 @@
 CC=gcc
 
 all:
-	$(CC) -D_GNU_SOURCE -o procregistrar.o procregistrar.c
+	$(CC) -c kreg.c -o kreg.o
+	$(CC) -o kreg kreg.o -L../kmul -lkmul
+
+clean:
+	rm -rf kreg.o kreg
