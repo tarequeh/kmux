@@ -181,7 +181,7 @@ static int unregister_thread(int pgid) {
 			if (validate_kernel_index(thread_register[index].kernel_index) < 0) {
 				printk("unregister_thread: Invalid kernel index %d associated with thread %d. Cleaning up.\n", thread_register[index].kernel_index, pgid);
 			} else {
-				printk("unregister_thread: Unregistering thread %d from kernel %s\n", pgid, kernel_register[index].kernel_name);
+				printk("unregister_thread: Unregistering thread %d from kernel %s\n", pgid, kernel_register[thread_register[index].kernel_index].kernel_name);
 			}
 
 			thread_register[index].kernel_index = -1;
