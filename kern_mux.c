@@ -386,19 +386,7 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 
 			return unregister_thread(thread_info.pgid);
 		}
-		case KMUX_IOCTL_CMD_GET_KERNEL_INDEX:
-		{
-			char kernel_name[MAX_KERNEL_NAME_LENGTH];
-
-			printk("Performing kernel index retrieval ioctl.\n");
-			if (copy_from_user(&kernel_name, (void*)arg, MAX_KERNEL_NAME_LENGTH)) {
-				printk("Error copying kernel name from user space.\n");
-				return -EFAULT;
-			}
-
-			return get_kernel_index(kernel_name);
-		}
-		case KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU:
+		case KMUX_REGISTER_KERNEL_CPU:
 		{
 			cpu_registration_entry cpu_registration_info;
 
@@ -410,7 +398,7 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 
 			return register_kernel_cpu(cpu_registration_info.kernel_index, cpu_registration_info.cpu);
 		}
-		case KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU:
+		case KMUX_UNREGISTER_KERNEL_CPU:
 		{
 			cpu_registration_entry cpu_registration_info;
 
@@ -422,6 +410,18 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 
 			return unregister_kernel_cpu(cpu_registration_info.kernel_index, cpu_registration_info.cpu);
 		}
+        case KMUX_GET_KERNEL_INDEX:
+        {
+            char kernel_name[MAX_KERNEL_NAME_LENGTH];
+
+            printk("Performing kernel index retrieval ioctl.\n");
+            if (copy_from_user(&kernel_name, (void*)arg, MAX_KERNEL_NAME_LENGTH)) {
+                printk("Error copying kernel name from user space.\n");
+                return -EFAULT;
+            }
+
+            return get_kernel_index(kernel_name);
+        }
 		default:
 		{
 			printk("Invalid kmux ioctl command: %u\n", cmd);
