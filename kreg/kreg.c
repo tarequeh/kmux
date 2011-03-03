@@ -7,6 +7,8 @@
 #include "../kern_mux.h"
 #include "../kmul/kmul.h"
 
+#define BUFFER_LENGTH 100
+
 void initialize_kreg(void) {
 	// Set affinity of this utility to CPU dedicated to Linux
 	pid_t kreg_pid = getpid();
@@ -17,41 +19,14 @@ void initialize_kreg(void) {
 
 // TODO: Create a loop that shows a prompt and waits for user input
 // TODO: Check for unregistered kernels every time a command comes in and get rid of idle loops
-int main(int argc, char *argv[]) {
+int main(void) {
     initialize_kreg();
 
-    char proc_path[50], kernel_name[MAX_KERNEL_NAME_LENGTH];
-    int kmux_command, proc_desc, ret_val;
-    int pgid, cpu;
+    char proc_path[50], input_buffer[BUFFER_LENGTH], kernel_name[MAX_KERNEL_NAME_LENGTH];
+    int kmux_command, proc_desc, ret_val, pgid, cpu, var_param, items_scanned;
 
+    printf("Starting kmux registration module\n");
     ret_val = sprintf(proc_path, "/proc/%s", KMUX_PROC_NAME);
-
-    // Sanitize input
-    if (argc != 4) {
-        printf("Usage: kreg command kernel_name, pgid/cpu");
-        exit(-1);
-    }
-
-    if (strlen(argv[1]) > 1) {
-        printf("Invalid kmux command: %s", argv[2]);
-        exit(-1);
-    } else {
-        kmux_command = atoi(argv[1]);
-        if (!kmux_command || kmux_command < KMUX_IOCTL_CMD_REGISTER_THREAD || kmux_command > KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU) {
-            printf("Invalid kmux command: %s", argv[1]);
-            exit(-1);
-        }
-    }
-
-    if (strlen(argv[2]) > 50) {
-        printf("Kernel name too long: %s", argv[1]);
-        exit(-1);
-    } else {
-        strcpy(kernel_name, argv[2]);
-    }
-
-    printf("kmux command: %d\n", kmux_command);
-    printf("Kernel name: %s\n", kernel_name);
 
     proc_desc = open(proc_path, O_RDONLY);
     if (proc_desc < 0) {
@@ -59,36 +34,57 @@ int main(int argc, char *argv[]) {
         exit(-1);
     }
 
-    if (kmux_command == KMUX_IOCTL_CMD_REGISTER_THREAD || kmux_command == KMUX_IOCTL_CMD_UNREGISTER_THREAD) {
-        pgid = atoi(argv[3]);
-        if (!pgid) {
-            printf("Invalid thread ID: %s", argv[3]);
-            exit(-1);
+    while (1) {
+        printf("kreg: command kernel_name pgid/cpu (command = -1 to exit)\n");
+        memset(input_buffer, 0, BUFFER_LENGTH);
+
+        fgets(input_buffer, BUFFER_LENGTH, stdin);
+
+        items_scanned = sscanf(input_buffer, "%d %s %d", &kmux_command, kernel_name, &var_param);
+
+        if (kmux_command == -1) {
+            break;
         }
 
-        printf("PGID: %d\n", pgid);
-
-        if (kmux_command == KMUX_IOCTL_CMD_REGISTER_THREAD) {
-            register_thread(proc_desc, kernel_name, pgid);
-        } else {
-            unregister_thread(proc_desc, kernel_name, pgid);
-        }
-    } else if (kmux_command == KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU || kmux_command == KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU) {
-        cpu = atoi(argv[3]);
-        if (!cpu) {
-            printf("Invalid CPU: %s", argv[3]);
-            exit(-1);
+        if (items_scanned != 3) {
+            printf("Items scanned %d. Invalid parameter: %s\n", items_scanned, input_buffer);
+            continue;
         }
 
-        printf("CPU: %d\n", cpu);
-        if (kmux_command == KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU) {
-            register_kernel_cpu(proc_desc, kernel_name, cpu);
-        } else {
-            unregister_kernel_cpu(proc_desc, kernel_name, cpu);
+        if (!kmux_command || kmux_command < KMUX_IOCTL_CMD_REGISTER_THREAD || kmux_command > KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU) {
+            printf("Invalid kmux command: %d\n\n", kmux_command);
+            continue;
         }
+
+        printf("kmux command: %d\n", kmux_command);
+        printf("Kernel name: %s\n", kernel_name);
+
+        if (kmux_command == KMUX_IOCTL_CMD_REGISTER_THREAD || kmux_command == KMUX_IOCTL_CMD_UNREGISTER_THREAD) {
+            pgid = var_param;
+
+            printf("PGID: %d\n", pgid);
+
+            if (kmux_command == KMUX_IOCTL_CMD_REGISTER_THREAD) {
+                register_thread(proc_desc, kernel_name, pgid);
+            } else {
+                unregister_thread(proc_desc, kernel_name, pgid);
+            }
+        } else if (kmux_command == KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU || kmux_command == KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU) {
+            cpu = var_param;
+
+            printf("CPU: %d\n", cpu);
+            if (kmux_command == KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU) {
+                register_kernel_cpu(proc_desc, kernel_name, cpu);
+            } else {
+                unregister_kernel_cpu(proc_desc, kernel_name, cpu);
+            }
+        }
+
+        printf("\n");
     }
 
     close(proc_desc);
 
+    printf("Exiting kmux registration module\n");
     return 0;
 }
