@@ -155,6 +155,14 @@ int register_thread(int proc_desc, char *kernel_name, int pgid) {
     }
 
     free(thread_info);
+
+    if (ret_val == 0) { // THread registration was successful
+        // Threads that run with host do not need to be prioritized via kmux
+        if (kernel_index != KMUX_HOST_KERNEL_INDEX) {
+            set_high_priority(pgid, 0);
+        }
+    }
+
     return ret_val;
 }
 
@@ -206,6 +214,14 @@ int register_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
     }
 
     free(cpu_registration_info);
+
+    if (ret_val == 0) { // CPU registration was successful
+        // Host processors do not need to have idle threads
+        if (kernel_index != KMUX_HOST_KERNEL_INDEX) {
+            spawn_idle_thread(cpu);
+        }
+    }
+
     return ret_val;
 }
 

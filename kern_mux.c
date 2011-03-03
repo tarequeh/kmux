@@ -18,7 +18,6 @@
 #include "kern_mux.h"
 
 #define MODULE_NAME "kernel_multiplexer"
-#define KMUX_HOST_KERNEL_INDEX 0
 
 // Needs to be replaced with semaphore
 static int device_open = 0;
@@ -206,10 +205,15 @@ static int register_kernel_cpu(int kernel_index, int cpu) {
 		return -EINVAL;
 	}
 
-	if (cpu_register[cpu].kernel_index != -1) {
-		printk("register_kernel_cpu: Requested CPU is already registered");
-		return -EEXIST;
-	}
+    if (cpu_register[cpu].kernel_index != -1) {
+        if (cpu_register[cpu].kernel_index == kernel_index) {
+            printk("register_kernel_cpu: CPU %d is already registered with %s\n", cpu, kernel_register[kernel_index].kernel_name);
+            return -EBUSY;
+        } else {
+            printk("register_kernel_cpu: CPU %d is not available\n", cpu);
+            return -EEXIST;
+        }
+    }
 
 	printk("register_kernel_cpu: Allocating CPU %d for kernel: %s\n", cpu, kernel_register[kernel_index].kernel_name);
 	cpu_register[cpu].kernel_index = kernel_index;
@@ -262,6 +266,8 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	// Obtain current process group ID
 	pid = task_pgrp(current);
 	pgid = pid->numbers[0].nr;
+
+	// printk("kmux_syscall_handler: Executing on %d\n", get_cpu());
 
 	// If PGID is 0 then its the host kernel's process group. Skip such processes.
 	if (pgid == 0) {
