@@ -28,6 +28,7 @@ static int __init sysprinter_init(void) {
 
 static void __exit sysprinter_exit(void) {
 	printk("Uninstalling the Syscall Printer kernel\n");
+	chain_kernel(get_kernel_index(MODULE_NAME), KMUX_UNCHAINED_KERNEL);
 	unregister_kern_syscall_handler(MODULE_NAME);
 	return;
 }

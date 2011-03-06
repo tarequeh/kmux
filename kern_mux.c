@@ -171,6 +171,7 @@ int chain_kernel(int kernel_index, int kernel_next) {
             return -EINVAL;
         }
 
+        printk("chain_kernel: Chaining kernel %s after %s\n", kernel_register[kernel_next].kernel_name, kernel_register[kernel_index].kernel_name);
         kernel_chain_register[kernel_index] = kernel_next;
         return SUCCESS;
     }
