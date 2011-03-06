@@ -29,6 +29,8 @@
 #define KMUX_HOST_KERNEL_CPU 0
 #define KMUX_HOST_KERNEL_INDEX 0
 
+#define KMUX_UNCHAINED_KERNEL -1
+
 #define KMUX_DEFAULT_KERNEL_NAME "linux"
 
 #define SUCCESS 0
@@ -41,7 +43,6 @@ typedef int (*kmux_kernel_syscall_handler)(struct pt_regs *);
 struct kernel_entry {
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	kmux_kernel_syscall_handler kernel_syscall_handler;
-	int is_direct;
 };
 
 typedef struct kernel_entry kernel_entry;
@@ -60,11 +61,19 @@ struct cpu_entry {
 
 typedef struct cpu_entry cpu_entry;
 
+// Structures exclusively used by kmul/ioctl
 struct cpu_registration_entry {
 	int kernel_index;
 	int cpu;
 };
 
 typedef struct cpu_registration_entry cpu_registration_entry;
+
+struct kernel_chain_entry {
+    int kernel_index;
+    int kernel_next;
+};
+
+typedef struct kernel_chain_entry kernel_chain_entry;
 
 #endif
