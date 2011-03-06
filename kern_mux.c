@@ -644,3 +644,6 @@ MODULE_LICENSE("GPL");
 
 EXPORT_SYMBOL_GPL(register_kern_syscall_handler);
 EXPORT_SYMBOL_GPL(unregister_kern_syscall_handler);
+EXPORT_SYMBOL_GPL(chain_kernel);
+EXPORT_SYMBOL_GPL(get_kernel_index);
+
