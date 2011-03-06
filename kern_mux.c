@@ -157,17 +157,17 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 
 int chain_kernel(int kernel_index, int kernel_next) {
     if (validate_kernel_index(kernel_index) < 0) {
-        printk("chain_kernel: Invalid kernel index %d", kernel_index);
+        printk("chain_kernel: Invalid kernel index: %d\n", kernel_index);
         return -EINVAL;
     }
 
     if (kernel_next == KMUX_UNCHAINED_KERNEL) {
-        printk("chain_kernel: Unchaining kernel %s", kernel_register[kernel_index].kernel_name);
+        printk("chain_kernel: Unchaining kernel: %s\n", kernel_register[kernel_index].kernel_name);
         kernel_chain_register[kernel_index] = KMUX_UNCHAINED_KERNEL;
         return SUCCESS;
     } else {
         if (validate_kernel_index(kernel_next) < 0) {
-            printk("chain_kernel: Invalid next kernel index %d", kernel_next);
+            printk("chain_kernel: Invalid next kernel index: %d\n", kernel_next);
             return -EINVAL;
         }
 
@@ -180,7 +180,7 @@ static int register_thread(int kernel_index, int pgid) {
 	int index;
 
 	if (validate_kernel_index(kernel_index) < 0) {
-		printk("register_thread: Invalid kernel index %d", kernel_index);
+		printk("register_thread: Invalid kernel index: %d", kernel_index);
 		return -EINVAL;
 	}
 
