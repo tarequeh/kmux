@@ -17,7 +17,6 @@ void initialize_kreg(void) {
 	switch_cpu_for_current_processes();
 }
 
-// TODO: Create a loop that shows a prompt and waits for user input
 // TODO: Check for unregistered kernels every time a command comes in and get rid of idle loops
 int main(void) {
     initialize_kreg();
