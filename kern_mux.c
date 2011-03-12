@@ -39,6 +39,14 @@ void *ghost_sysenter_addr = NULL;
 
 /* Array lookup and validation functions */
 
+int get_host_sysenter_handler() {
+    if (ghost_sysenter_addr == NULL) {
+        return -EFAULT;
+    } else {
+        return (int)ghost_sysenter_addr;
+    }
+}
+
 int get_kernel_index(char *kernel_name) {
 	int index;
 
@@ -647,3 +655,4 @@ EXPORT_SYMBOL_GPL(register_kern_syscall_handler);
 EXPORT_SYMBOL_GPL(unregister_kern_syscall_handler);
 EXPORT_SYMBOL_GPL(chain_kernel);
 EXPORT_SYMBOL_GPL(get_kernel_index);
+EXPORT_SYMBOL_GPL(get_host_sysenter_handler);

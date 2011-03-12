@@ -1,5 +1,5 @@
-obj-m	:= sandbox.o
-sysprinter-objs := sandbox.o
+obj-m	:= sbox.o
+sbox-objs := sbox_entry.o sandbox.o
 
 KDIR    := /lib/modules/$(shell uname -r)/build
 INCLUDE	:= -I/usr/include/asm/mach-default/
@@ -19,7 +19,7 @@ remove-files:
 	rm -rf *.ko *.mod.c *.o *.mod.o .*.cmd .tmp_versions modules.order Module.symvers
 
 remove-module:
-	rmmod sandbox.ko
+	rmmod sbox.ko
 
 install:
-	insmod sandbox.ko
+	insmod sbox.ko
