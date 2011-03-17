@@ -15,8 +15,8 @@ extern int chain_kernel(int kernel_index, int kernel_next);
 extern int get_kernel_index(char *kernel_name);
 extern int get_host_sysenter_handler(void);
 
-DEFINE_PER_CPU(unsigned long, gx86_tss);
-DEFINE_PER_CPU(unsigned long, gx86_tss_ip_location);
+DEFINE_PER_CPU(unsigned long, sbox_x86_tss);
+DEFINE_PER_CPU(unsigned long, sbox_x86_tss_ip_location);
 
 extern void sandbox_sysenter_handler(void);
 
@@ -38,14 +38,14 @@ static void load_cpu_tss_locations(void *info) {
     gdt_tss = (struct tss_struct *)temp_gdt_tss;
 
     // x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
-    cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
+    cpu_x86_tss_ip_location = &get_cpu_var(sbox_x86_tss_ip_location);
     *cpu_x86_tss_ip_location = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
-    put_cpu_var(gx86_tss_ip_location);
+    put_cpu_var(sbox_x86_tss_ip_location);
 
     // Save the location of tss_struct's x86_tss
-    cpu_x86_tss = &get_cpu_var(gx86_tss);
+    cpu_x86_tss = &get_cpu_var(sbox_x86_tss);
     *cpu_x86_tss = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
-    put_cpu_var(gx86_tss);
+    put_cpu_var(sbox_x86_tss);
 }
 
 void __attribute__((regparm(1))) sandbox_syscall_handler(struct pt_regs *regs) {
@@ -56,13 +56,15 @@ void __attribute__((regparm(1))) sandbox_syscall_handler(struct pt_regs *regs) {
     printk("sandbox_syscall_handler: Syscall number: %lu executing on %d\n", regs->ax, get_cpu());
     // Add logic to filter system call
 
-    cpu_x86_tss = &get_cpu_var(gx86_tss);
-    cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
+    cpu_x86_tss = &get_cpu_var(sbox_x86_tss);
+    cpu_x86_tss_ip_location = &get_cpu_var(sbox_x86_tss_ip_location);
 
+    regs->orig_ax = *cpu_x86_tss;
     tss_ip_location = (unsigned long *)(*cpu_x86_tss_ip_location);
 
     host_sysenter_handler = get_host_sysenter_handler();
     *tss_ip_location = (unsigned long)host_sysenter_handler;
+    return;
 }
 
 /* Module initialization/ termination */
@@ -79,7 +81,6 @@ static int __init sandbox_init(void) {
     smp_call_function(load_cpu_tss_locations, NULL, 1);
 
 	register_kern_syscall_handler(MODULE_NAME, sysenter_handler);
-	chain_kernel(get_kernel_index(MODULE_NAME), KMUX_HOST_KERNEL_INDEX);
 	return 0;
 }
 

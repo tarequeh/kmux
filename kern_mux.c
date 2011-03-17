@@ -39,7 +39,7 @@ void *ghost_sysenter_addr = NULL;
 
 /* Array lookup and validation functions */
 
-int get_host_sysenter_handler() {
+int get_host_sysenter_handler(void) {
     if (ghost_sysenter_addr == NULL) {
         return -EFAULT;
     } else {
