@@ -5,8 +5,8 @@
 #include <linux/ioctl.h>
 
 #define MAX_CPU_SUPPORT 16
-#define MAX_KERNEL_SUPPORT 50
-#define MAX_THREAD_SUPPORT 1000
+#define MAX_KERNEL_SUPPORT 64
+#define MAX_THREAD_SUPPORT 16384 // 2^14
 #define MAX_KERNEL_NAME_LENGTH 50
 
 #define KMUX_PROC_NAME "kmux"
