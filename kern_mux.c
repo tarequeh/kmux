@@ -266,8 +266,6 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	pid = task_pgrp(current);
 	pgid = pid->numbers[0].nr;
 
-	// printk("kmux_syscall_handler: Executing on %d\n", get_cpu());
-
     for(index = 0; index < MAX_THREAD_SUPPORT; index++){
         if (thread_register[index].pgid == pgid) {
             kernel_index = thread_register[index].kernel_index;
@@ -280,7 +278,7 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
         kernel_index = KMUX_HOST_KERNEL_INDEX;
     }
 
-	// Call through the chain of kernels until someone wants to exit or pass control to host
+    // Call through the chain of kernels until someone wants to exit or pass control to host
 	while ((kernel_index != KMUX_HOST_KERNEL_INDEX) && (kernel_index != KMUX_SYSCALL_EXIT_INDEX)) {
         // Validate next kernel
         if (validate_kernel_index(kernel_index) < 0) {
@@ -308,17 +306,16 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
     // x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
     tss_ip_location = (unsigned long *)(*cpu_x86_tss_ip_location);
 
-	if (kernel_index == KMUX_HOST_KERNEL_INDEX) {
-	    *tss_ip_location = (unsigned long)ghost_sysenter_addr;
-	} else {
-	    *tss_ip_location = (unsigned long)gsysexit_addr;
-	}
+    if (kernel_index == KMUX_HOST_KERNEL_INDEX) {
+        *tss_ip_location = (unsigned long)ghost_sysenter_addr;
+    } else {
+        *tss_ip_location = (unsigned long)gsysexit_addr;
+    }
 
 	return;
 }
 
 /* ------------------------- */
-
 
 /* Syscall capture */
 static void* hw_int_init(void) {

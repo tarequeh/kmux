@@ -1,5 +1,5 @@
 obj-m	:= sbox.o
-sbox-objs := sbox_entry.o sandbox.o
+sbox-objs := sandbox.o
 
 KDIR    := /lib/modules/$(shell uname -r)/build
 INCLUDE	:= -I/usr/include/asm/mach-default/

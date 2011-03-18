@@ -13,9 +13,7 @@ extern int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_
 extern int unregister_kern_syscall_handler(char* kernel_name);
 extern int get_kernel_index(char* kernel_name);
 
-extern void sandbox_sysenter_handler(void);
-
-int __attribute__((regparm(1))) sandbox_syscall_handler(struct pt_regs *regs) {
+int sandbox_syscall_handler(struct pt_regs *regs) {
     int next_kernel_index;
 
     printk("sandbox_syscall_handler: Syscall number: %lu executing on %d\n", regs->ax, get_cpu());
@@ -28,12 +26,8 @@ int __attribute__((regparm(1))) sandbox_syscall_handler(struct pt_regs *regs) {
 
 /* Module initialization/ termination */
 static int __init sandbox_init(void) {
-    kmux_kernel_syscall_handler sysenter_handler;
-
     printk("Installing module: %s\n", MODULE_NAME);
-
-    sysenter_handler = (kmux_kernel_syscall_handler)(&sandbox_sysenter_handler);
-	register_kern_syscall_handler(MODULE_NAME, sysenter_handler);
+	register_kern_syscall_handler(MODULE_NAME, &sandbox_syscall_handler);
 	return 0;
 }
 
