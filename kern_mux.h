@@ -29,9 +29,10 @@
 #define KMUX_HOST_KERNEL_CPU 0
 #define KMUX_HOST_KERNEL_INDEX 0
 
-#define KMUX_UNCHAINED_KERNEL -1
+#define KMUX_SYSCALL_EXIT_INDEX -1
 
 #define KMUX_DEFAULT_KERNEL_NAME "linux"
+#define KMUX_SYSCALL_MUX_KERNEL_NAME "syscallmux"
 
 #define SUCCESS 0
 
@@ -68,12 +69,5 @@ struct cpu_registration_entry {
 };
 
 typedef struct cpu_registration_entry cpu_registration_entry;
-
-struct kernel_chain_entry {
-    int kernel_index;
-    int kernel_next;
-};
-
-typedef struct kernel_chain_entry kernel_chain_entry;
 
 #endif

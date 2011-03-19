@@ -1,11 +1,12 @@
 #include <asm/asm-offsets.h>
 #include <asm/segment.h>
+#include <asm/errno.h>
 #include <asm/thread_info.h>
 #include <linux/linkage.h>
 
 #define ASM_PAGE_MASK (~(4096-1))
-	
-/* from entry.S */	
+
+/* from entry.S */
 EBX         = 0x00
 ECX         = 0x04
 EDX         = 0x08
@@ -27,10 +28,10 @@ OLDSS		= 0x40
 CF_MASK		= 0x00000001
 TF_MASK		= 0x00000100
 IF_MASK		= 0x00000200
-DF_MASK		= 0x00000400 
+DF_MASK		= 0x00000400
 NT_MASK		= 0x00004000
 VM_MASK		= 0x00020000
-		
+
 #define SAVE_ALL                            \
     cld;                                    \
     pushl %gs;                              \
@@ -75,14 +76,20 @@ ENTRY(save_syscall_environment)
 
     # Create space on stack to receive TSS
     pushl $0
-	SAVE_ALL
+    SAVE_ALL
 
     movl %esp, %eax
-	call kmux_syscall_handler
+    call kmux_syscall_handler
 
-	RESTORE_REGS
+    RESTORE_REGS
     # Restore TSS
     movl (%esp), %esp
 
     # Jump to IP in TSS
-	jmp  *0x04(%esp)
+    jmp  *0x04(%esp)
+
+.globl exit_syscall_environment
+.align 16
+exit_syscall_environment:
+    movl $-EPERM, %eax
+    sti

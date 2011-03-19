@@ -27,26 +27,16 @@ kernel_entry kernel_register[MAX_KERNEL_SUPPORT];
 thread_entry thread_register[MAX_THREAD_SUPPORT];
 cpu_entry cpu_register[MAX_CPU_SUPPORT];
 
-// Index = current kernel, Value = next kernel
-int kernel_chain_register[MAX_KERNEL_SUPPORT];
-
 extern void save_syscall_environment(void);
+extern void exit_syscall_environment(void);
 
 DEFINE_PER_CPU(unsigned long, gx86_tss);
 DEFINE_PER_CPU(unsigned long, gx86_tss_ip_location);
 
 void *ghost_sysenter_addr = NULL;
+void *gsysexit_addr = NULL;
 
 /* Array lookup and validation functions */
-
-int get_host_sysenter_handler(void) {
-    if (ghost_sysenter_addr == NULL) {
-        return -EFAULT;
-    } else {
-        return (int)ghost_sysenter_addr;
-    }
-}
-
 int get_kernel_index(char *kernel_name) {
 	int index;
 
@@ -73,17 +63,6 @@ static int validate_kernel_index(int kernel_index) {
 	}
 
 	return SUCCESS;
-}
-
-int validate_chain_kernel_removal(int kernel_index) {
-    int index;
-    for (index = 0; index < MAX_KERNEL_SUPPORT; index++) {
-        if (kernel_chain_register[index] == kernel_index) {
-            printk("validate_chain_kernel_removal: Kernel %s dependent on kernel %s\n", kernel_register[index].kernel_name, kernel_register[kernel_index].kernel_name);
-            return -EINVAL;
-        }
-    }
-    return SUCCESS;
 }
 
 /* kmux API functions */
@@ -132,19 +111,11 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 	printk("unregister_kern_syscall_handler: Unregistering kernel: %s\n", kernel_name);
 	kernel_index = get_kernel_index(kernel_name);
 
-	if (validate_chain_kernel_removal(kernel_index) < 0) {
-	    printk("unregister_kern_syscall_handler: Cannot unregister kernel %s. Dependency found\n", kernel_name);
-	    return -EINVAL;
-	}
-
 	if (kernel_index >= 0) {
 		// Unregister handler
 		printk("unregister_kern_syscall_handler: Found kernel record at index: %d\n", kernel_index);
 		memset(kernel_register[kernel_index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
 		kernel_register[kernel_index].kernel_syscall_handler = NULL;
-
-		// Unchain kernel
-		kernel_chain_register[kernel_index] = KMUX_UNCHAINED_KERNEL;
 
 		// Remove all registered threads
 		for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
@@ -161,28 +132,6 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 
 	printk("unregister_kern_syscall_handler: Could not find entry for kernel: %s. Already removed?\n", kernel_name);
 	return -EINVAL;
-}
-
-int chain_kernel(int kernel_index, int kernel_next) {
-    if (validate_kernel_index(kernel_index) < 0) {
-        printk("chain_kernel: Invalid kernel index: %d\n", kernel_index);
-        return -EINVAL;
-    }
-
-    if (kernel_next == KMUX_UNCHAINED_KERNEL) {
-        printk("chain_kernel: Unchaining kernel: %s\n", kernel_register[kernel_index].kernel_name);
-        kernel_chain_register[kernel_index] = KMUX_UNCHAINED_KERNEL;
-        return SUCCESS;
-    } else {
-        if (validate_kernel_index(kernel_next) < 0) {
-            printk("chain_kernel: Invalid next kernel index: %d\n", kernel_next);
-            return -EINVAL;
-        }
-
-        printk("chain_kernel: Chaining kernel %s after %s\n", kernel_register[kernel_next].kernel_name, kernel_register[kernel_index].kernel_name);
-        kernel_chain_register[kernel_index] = kernel_next;
-        return SUCCESS;
-    }
 }
 
 static int register_thread(int kernel_index, int pgid) {
@@ -304,6 +253,7 @@ static int unregister_kernel_cpu(int kernel_index, int cpu) {
 	}
 }
 
+// NOTE: No print business in this function. Critical for system performance
 void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	int index, kernel_index, pgid;
 	kmux_kernel_syscall_handler kmux_sysenter_handler;
@@ -351,29 +301,26 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	//tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
 	tss_ip_location = (unsigned long *)(*cpu_x86_tss_ip_location);
 
-	kmux_sysenter_handler = kernel_register[kernel_index].kernel_syscall_handler;
+	// Call through the chain of kernels until someone wants to exit or pass control to host
+	while ((kernel_index != KMUX_SYSCALL_EXIT_INDEX) && (kernel_index != KMUX_HOST_KERNEL_INDEX)) {
+        // Validate next kernel
+        if (validate_kernel_index(kernel_index) < 0) {
+            // TODO: For now we pass control to host for invalid kernels, maybe we should just exit
+            kernel_index = KMUX_HOST_KERNEL_INDEX;
+            break;
+        }
 
-	// Call through the chain of kernels until an unchained kernel is found
-	while (kernel_chain_register[kernel_index] != KMUX_UNCHAINED_KERNEL) {
-	    (*kmux_sysenter_handler)(regs);
+        // Load handler for next kernel
+        kmux_sysenter_handler = kernel_register[kernel_index].kernel_syscall_handler;
 
-	    // Get next kernel in chain
-	    kernel_index = kernel_chain_register[kernel_index];
-
-	    // Validate next kernel
-	    if (validate_kernel_index(kernel_index) < 0) {
-	        kmux_sysenter_handler = NULL;
-	        break;
-	    }
-
-	    // Load handler for next kernel
-	    kmux_sysenter_handler = kernel_register[kernel_index].kernel_syscall_handler;
+        // Pass control to kernel and receive next kernel in chain
+	    kernel_index = (*kmux_sysenter_handler)(regs);
 	}
 
-	if (kmux_sysenter_handler != NULL) {
-	    *tss_ip_location = (unsigned long)kmux_sysenter_handler;
+	if (kernel_index == KMUX_SYSCALL_EXIT_INDEX) {
+	    *tss_ip_location = (unsigned long)gsysexit_addr;
 	} else {
-		*tss_ip_location = (unsigned long)ghost_sysenter_addr;
+	    *tss_ip_location = (unsigned long)ghost_sysenter_addr;
 	}
 
 	return;
@@ -594,12 +541,10 @@ static int __init kmux_init(void) {
 		cpu_register[index].idle_pid = -1;
 	}
 
-	for (index = 0; index<MAX_KERNEL_SUPPORT; index++) {
-	    kernel_chain_register[index] = -1;
-	}
-
 	host_sysenter_addr = hw_int_init();
 	ghost_sysenter_addr = host_sysenter_addr;
+
+	gsysexit_addr = (void *)(&exit_syscall_environment);
 
 	printk("Current host sysenter handler: %p\n", host_sysenter_addr);
 
@@ -607,9 +552,6 @@ static int __init kmux_init(void) {
 	register_kern_syscall_handler(KMUX_DEFAULT_KERNEL_NAME, host_sysenter_addr);
 
 	register_kernel_cpu(KMUX_HOST_KERNEL_INDEX, KMUX_HOST_KERNEL_CPU);
-
-	// Host kernel will not call any other kernel
-	chain_kernel(KMUX_HOST_KERNEL_INDEX, KMUX_UNCHAINED_KERNEL);
 
 	// Load TSS locations for current CPU
 	load_cpu_tss_locations(NULL);
@@ -653,6 +595,4 @@ MODULE_LICENSE("GPL");
 
 EXPORT_SYMBOL_GPL(register_kern_syscall_handler);
 EXPORT_SYMBOL_GPL(unregister_kern_syscall_handler);
-EXPORT_SYMBOL_GPL(chain_kernel);
 EXPORT_SYMBOL_GPL(get_kernel_index);
-EXPORT_SYMBOL_GPL(get_host_sysenter_handler);
