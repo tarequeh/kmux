@@ -1,36 +1,7 @@
 #include <asm/asm-offsets.h>
 #include <asm/segment.h>
-#include <asm/errno.h>
 #include <asm/thread_info.h>
 #include <linux/linkage.h>
-
-#define ASM_PAGE_MASK (~(4096-1))
-
-/* from entry.S */
-EBX         = 0x00
-ECX         = 0x04
-EDX         = 0x08
-ESI         = 0x0C
-EDI         = 0x10
-EBP         = 0x14
-EAX         = 0x18
-DS          = 0x1C
-ES          = 0x20
-FS          = 0x24
-GS          = 0x28
-ORIG_EAX	= 0x2C
-EIP         = 0x30
-CS          = 0x34
-EFLAGS		= 0x38
-OLDESP		= 0x3C
-OLDSS		= 0x40
-
-CF_MASK		= 0x00000001
-TF_MASK		= 0x00000100
-IF_MASK		= 0x00000200
-DF_MASK		= 0x00000400
-NT_MASK		= 0x00004000
-VM_MASK		= 0x00020000
 
 #define SAVE_ALL                            \
     cld;                                    \
@@ -71,7 +42,7 @@ VM_MASK		= 0x00020000
 
 .text
 ALIGN
-ENTRY(save_syscall_environment)
+ENTRY(sandbox_sysenter_handler)
     movl TSS_sysenter_sp0(%esp), %esp
 
     # Create space on stack to receive TSS
@@ -79,7 +50,7 @@ ENTRY(save_syscall_environment)
     SAVE_ALL
 
     movl %esp, %eax
-    call kmux_syscall_handler
+    call sandbox_syscall_handler
 
     RESTORE_REGS
     # Restore TSS
@@ -87,9 +58,3 @@ ENTRY(save_syscall_environment)
 
     # Jump to IP in TSS
     jmp  *0x04(%esp)
-
-.globl exit_syscall_environment
-.align 16
-exit_syscall_environment:
-    movl $-EPERM, %eax
-    sti
