@@ -10,11 +10,11 @@
 #define MODULE_NAME "sandbox"
 #define MAX_SYSCALL 337
 
-#define DIRECTIVE_MAX_LENGTH 100
+#define DIRECTIVE_MAX_LENGTH 64
 #define DIRECTIVE_NEXT_KERNEL "next_kernel"
 #define DIRECTIVE_ALLOWED_SYSCALLS "allowed_syscalls"
 
-#define SCAN_REGEX_LENGTH 100
+#define SCAN_REGEX_LENGTH 64
 
 extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler);
 extern int unregister_kernel(char* kernel_name);
