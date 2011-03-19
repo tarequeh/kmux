@@ -268,41 +268,20 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 
 	// printk("kmux_syscall_handler: Executing on %d\n", get_cpu());
 
-	// If PGID is 0 then its the host kernel's process group. Skip such processes.
-	if (pgid == 0) {
-		//kmux_sysenter_handler = (kmux_kernel_syscall_handler)ghost_sysenter_addr;
-		kernel_index = KMUX_HOST_KERNEL_INDEX;
-	} else {
-		for(index = 0; index < MAX_THREAD_SUPPORT; index++){
-			if (thread_register[index].pgid == pgid) {
-				kernel_index = thread_register[index].kernel_index;
-				break;
-			}
-		}
+    for(index = 0; index < MAX_THREAD_SUPPORT; index++){
+        if (thread_register[index].pgid == pgid) {
+            kernel_index = thread_register[index].kernel_index;
+            break;
+        }
+    }
 
-		if (index == MAX_THREAD_SUPPORT) {
-			// Thread not registered. Host OS will handle.
-			kernel_index = KMUX_HOST_KERNEL_INDEX;
-		}
-	}
-
-    if (validate_kernel_index(kernel_index) < 0) {
-		kernel_index = KMUX_HOST_KERNEL_INDEX;
-	}
-
-	cpu_x86_tss = &get_cpu_var(gx86_tss);
-	cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
-
-	// In assembly we push a null value in place of orig_eax. Save the TSS location there
-	//regs->orig_ax = (unsigned long)((char *)gdt_tss + sizeof(struct tss_struct));
-	regs->orig_ax = *cpu_x86_tss;
-
-	// x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
-	//tss_ip_location = (unsigned long *)((char *)gdt_tss + sizeof(struct tss_struct) + 4);
-	tss_ip_location = (unsigned long *)(*cpu_x86_tss_ip_location);
+    if (index == MAX_THREAD_SUPPORT) {
+        // Thread not registered. Host OS will handle.
+        kernel_index = KMUX_HOST_KERNEL_INDEX;
+    }
 
 	// Call through the chain of kernels until someone wants to exit or pass control to host
-	while ((kernel_index != KMUX_SYSCALL_EXIT_INDEX) && (kernel_index != KMUX_HOST_KERNEL_INDEX)) {
+	while ((kernel_index != KMUX_HOST_KERNEL_INDEX) && (kernel_index != KMUX_SYSCALL_EXIT_INDEX)) {
         // Validate next kernel
         if (validate_kernel_index(kernel_index) < 0) {
             // TODO: For now we pass control to host for invalid kernels, maybe we should just exit
@@ -317,10 +296,22 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	    kernel_index = (*kmux_sysenter_handler)(regs);
 	}
 
-	if (kernel_index == KMUX_SYSCALL_EXIT_INDEX) {
-	    *tss_ip_location = (unsigned long)gsysexit_addr;
-	} else {
+    // NOTE: Beyond this point, we will either return error on syscall or pass control to host kernel
+
+    // Load TSS and TSS->IP locations for current CPU
+    cpu_x86_tss = &get_cpu_var(gx86_tss);
+    cpu_x86_tss_ip_location = &get_cpu_var(gx86_tss_ip_location);
+
+    // In assembly we push a null value in place of orig_eax. Save the TSS location there
+    regs->orig_ax = *cpu_x86_tss;
+
+    // x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
+    tss_ip_location = (unsigned long *)(*cpu_x86_tss_ip_location);
+
+	if (kernel_index == KMUX_HOST_KERNEL_INDEX) {
 	    *tss_ip_location = (unsigned long)ghost_sysenter_addr;
+	} else {
+	    *tss_ip_location = (unsigned long)gsysexit_addr;
 	}
 
 	return;
@@ -544,9 +535,10 @@ static int __init kmux_init(void) {
 	host_sysenter_addr = hw_int_init();
 	ghost_sysenter_addr = host_sysenter_addr;
 
-	gsysexit_addr = (void *)(&exit_syscall_environment);
+	printk("Current host sysenter handler: %p\n", ghost_sysenter_addr);
 
-	printk("Current host sysenter handler: %p\n", host_sysenter_addr);
+	gsysexit_addr = (void *)(&exit_syscall_environment);
+	printk("Current sysexit handler: %p\n", gsysexit_addr);
 
 	// Default kernel has to be at KMUX_HOST_KERNEL_INDEX
 	register_kern_syscall_handler(KMUX_DEFAULT_KERNEL_NAME, host_sysenter_addr);
