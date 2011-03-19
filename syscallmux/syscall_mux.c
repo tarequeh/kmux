@@ -8,8 +8,8 @@
 
 #define MODULE_NAME "syscallmux"
 
-extern int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler syscall_handler);
-extern int unregister_kern_syscall_handler(char* kernel_name);
+extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler);
+extern int unregister_kernel(char* kernel_name);
 extern int get_kernel_index(char *kernel_name);
 
 int syscallmux_syscall_handler(struct pt_regs *regs) {
@@ -25,16 +25,22 @@ int syscallmux_syscall_handler(struct pt_regs *regs) {
     return next_kernel_index;
 }
 
+int syscallmux_config_handler(char *config_buffer) {
+    printk("Configuring kernel: %s\n", MODULE_NAME);
+    // Process buffer
+    return SUCCESS;
+}
+
 /* Module initialization/ termination */
 static int __init syscallmux_init(void) {
     printk("Installing module: %s\n", MODULE_NAME);
-    register_kern_syscall_handler(MODULE_NAME, &syscallmux_syscall_handler);
+    register_kernel(MODULE_NAME, &syscallmux_syscall_handler, &syscallmux_config_handler);
     return 0;
 }
 
 static void __exit syscallmux_exit(void) {
     printk("Uninstalling the Syscall Multiplexer kernel\n");
-    unregister_kern_syscall_handler(MODULE_NAME);
+    unregister_kernel(MODULE_NAME);
     return;
 }
 /* ------------------------- */

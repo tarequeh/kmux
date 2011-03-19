@@ -24,7 +24,7 @@ static int device_open = 0;
 
 /* Variables global to kmux module (TODO: Protect write access via semaphore) */
 kernel_entry kernel_register[MAX_KERNEL_SUPPORT];
-thread_entry *thread_register = NULL;
+thread_entry thread_register[MAX_THREAD_SUPPORT];
 cpu_entry cpu_register[MAX_CPU_SUPPORT];
 
 extern void save_syscall_environment(void);
@@ -113,20 +113,25 @@ static int lookup_kernel_index(int pgid) {
 
 /* kmux API functions */
 
-int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler syscall_handler){
+int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler){
 	int index;
 
-	printk("register_kern_syscall_handler: Adding handler: %p for kernel: %s\n", syscall_handler, kernel_name);
 	// Argument check
 	if (kernel_name[0] == 0 || strlen(kernel_name) > MAX_KERNEL_NAME_LENGTH || syscall_handler == NULL) {
 		return -EINVAL;
 	}
 
+    printk("register_kernel: Adding syscall handler: %p for kernel: %s\n", syscall_handler, kernel_name);
+    if (config_handler != NULL) {
+        printk("register_kernel: Adding config handler: %p for kernel: %s\n", config_handler, kernel_name);
+    }
+
 	// Find spot by kernel name
 	for (index = 0; index < MAX_KERNEL_SUPPORT; index++) {
 		if (strcmp(kernel_name, kernel_register[index].kernel_name) == 0) {
-			printk("register_kern_syscall_handler: Found existing spot at %d\n", index);
+			printk("register_kernel: Found existing spot at %d\n", index);
 			kernel_register[index].kernel_syscall_handler = syscall_handler;
+			kernel_register[index].kernel_config_handler = config_handler;
 			return SUCCESS;
 		}
 	}
@@ -134,18 +139,19 @@ int register_kern_syscall_handler(char* kernel_name, kmux_kernel_syscall_handler
 	// No existing spot. Check for empty spot
 	for(index = 0; index < MAX_KERNEL_SUPPORT; index++) {
 		if (kernel_register[index].kernel_name[0] == 0) {
-			printk("register_kern_syscall_handler: Found empty spot at %d\n", index);
+			printk("register_kernel: Found empty spot at %d\n", index);
 			strcpy(kernel_register[index].kernel_name, kernel_name);
 			kernel_register[index].kernel_syscall_handler = syscall_handler;
+			kernel_register[index].kernel_config_handler = config_handler;
 			return SUCCESS;
 		}
 	}
 
-	printk("register_kern_syscall_handler: Failed to register %s. Could not find existing/empty spot\n", kernel_name);
+	printk("register_kernel: Failed to register %s. Could not find existing/empty spot\n", kernel_name);
 	return -ENOSPC;
 }
 
-int unregister_kern_syscall_handler(char* kernel_name) {
+int unregister_kernel(char* kernel_name) {
 	int index, kernel_index;
 
 	// Basic check
@@ -154,20 +160,21 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 	}
 
 	// Find token spot
-	printk("unregister_kern_syscall_handler: Unregistering kernel: %s\n", kernel_name);
+	printk("unregister_kernel: Unregistering kernel: %s\n", kernel_name);
 	kernel_index = get_kernel_index(kernel_name);
 
 	if (kernel_index >= 0) {
 		// Unregister handler
-		printk("unregister_kern_syscall_handler: Found kernel record at index: %d\n", kernel_index);
+		printk("unregister_kernel: Found kernel record at index: %d\n", kernel_index);
 		memset(kernel_register[kernel_index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
 		kernel_register[kernel_index].kernel_syscall_handler = NULL;
+		kernel_register[kernel_index].kernel_config_handler = NULL;
 
 		// Remove all registered threads
 		for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
 			if (thread_register[index].kernel_index == kernel_index) {
 				// Unregister thread
-				printk("unregister_kern_syscall_handler: Removing registered thread pgid %d\n", thread_register[index].pgid);
+				printk("unregister_kernel: Removing registered thread pgid %d\n", thread_register[index].pgid);
 				thread_register[index].kernel_index = -1;
 				thread_register[index].pgid = -1;
 			}
@@ -176,7 +183,7 @@ int unregister_kern_syscall_handler(char* kernel_name) {
 		return SUCCESS;
 	}
 
-	printk("unregister_kern_syscall_handler: Could not find entry for kernel: %s. Already removed?\n", kernel_name);
+	printk("unregister_kernel: Could not find entry for kernel: %s. Already removed?\n", kernel_name);
 	return -EINVAL;
 }
 
@@ -294,6 +301,25 @@ static int unregister_kernel_cpu(int kernel_index, int cpu) {
 			return SUCCESS;
 		}
 	}
+}
+
+int configure_kernel(char *kernel_name, char *config_buffer) {
+    int kernel_index;
+    kmux_kernel_config_handler kernel_config_handler;
+
+    kernel_index = get_kernel_index(kernel_name);
+
+    // Host kernel does not accept configuration
+    if (kernel_index == KMUX_HOST_KERNEL_INDEX || kernel_index < 0) {
+        return kernel_index;
+    }
+
+    kernel_config_handler = kernel_register[kernel_index].kernel_config_handler;
+    if (kernel_config_handler == NULL) {
+        return -EFAULT;
+    } else {
+        return (*kernel_config_handler)(config_buffer);
+    }
 }
 
 // NOTE: No print business in this function. Critical for system performance
@@ -467,7 +493,19 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
 
             return get_kernel_index(kernel_name);
         }
-		default:
+        case KMUX_CONFIGURE_KERNEL:
+        {
+            kernel_config config_info;
+
+            printk("Performing kernel config ioctl.\n");
+            if (copy_from_user(&config_info, (void*)arg, sizeof(kernel_config))) {
+                printk("Error copying kernel configuration information from user space.\n");
+                return -EFAULT;
+            }
+
+            return configure_kernel(config_info.kernel_name, config_info.config_buffer);
+        }
+        default:
 		{
 			printk("Invalid kmux ioctl command: %u\n", cmd);
 			return -EFAULT;
@@ -559,12 +597,7 @@ static int __init kmux_init(void) {
 	for (index = 0; index < MAX_KERNEL_SUPPORT; index++){
 		memset(kernel_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
 		kernel_register[index].kernel_syscall_handler = NULL;
-	}
-
-	thread_register = kmalloc(MAX_THREAD_SUPPORT * sizeof(thread_entry), GFP_KERNEL);
-	if (!thread_register) {
-	    printk("Failed to allocate memory for thread register. Size: %d bytes\n", MAX_THREAD_SUPPORT * sizeof(thread_entry));
-	    return -ENOMEM;
+		kernel_register[index].kernel_config_handler = NULL;
 	}
 
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
@@ -586,7 +619,7 @@ static int __init kmux_init(void) {
 	printk("Current sysexit handler: %p\n", gsysexit_addr);
 
 	// Default kernel has to be at KMUX_HOST_KERNEL_INDEX
-	register_kern_syscall_handler(KMUX_DEFAULT_KERNEL_NAME, ghost_sysenter_addr);
+	register_kernel(KMUX_DEFAULT_KERNEL_NAME, ghost_sysenter_addr, NULL);
 
 	register_kernel_cpu(KMUX_HOST_KERNEL_INDEX, KMUX_HOST_KERNEL_CPU);
 
@@ -616,7 +649,7 @@ static void __exit kmux_exit(void) {
 	remove_proc_entry(KMUX_PROC_NAME, NULL);
 
 	unregister_kernel_cpu(KMUX_HOST_KERNEL_INDEX, KMUX_HOST_KERNEL_CPU);
-	unregister_kern_syscall_handler(KMUX_DEFAULT_KERNEL_NAME);
+	unregister_kernel(KMUX_DEFAULT_KERNEL_NAME);
 
 	// Free thread register
 	kfree(thread_register);
@@ -634,6 +667,6 @@ MODULE_AUTHOR("Tareque Hossain");
 MODULE_DESCRIPTION("Kernel Multiplexer for Handling Sandboxed System Calls");
 MODULE_LICENSE("GPL");
 
-EXPORT_SYMBOL_GPL(register_kern_syscall_handler);
-EXPORT_SYMBOL_GPL(unregister_kern_syscall_handler);
+EXPORT_SYMBOL_GPL(register_kernel);
+EXPORT_SYMBOL_GPL(unregister_kernel);
 EXPORT_SYMBOL_GPL(get_kernel_index);

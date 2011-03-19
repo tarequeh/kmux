@@ -7,7 +7,8 @@
 #define MAX_CPU_SUPPORT 16
 #define MAX_KERNEL_SUPPORT 64
 #define MAX_THREAD_SUPPORT 16384 // 2^14
-#define MAX_KERNEL_NAME_LENGTH 50
+#define MAX_KERNEL_NAME_LENGTH 64
+#define MAX_KERNEL_CONFIG_BUFFER_LENGTH 512
 
 #define KMUX_PROC_NAME "kmux"
 #define KMUX_PROC_NUMBER 0223
@@ -16,6 +17,7 @@
 #define KMUX_IOCTL_CMD_UNREGISTER_THREAD 2
 #define KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU 3
 #define KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU 4
+#define KMUX_IOCTL_CMD_CONFIGURE_KERNEL 5
 
 #define KMUX_IOCTL_CMD_GET_KERNEL_INDEX 51
 
@@ -23,6 +25,7 @@
 #define KMUX_UNREGISTER_THREAD _IOR(0, KMUX_IOCTL_CMD_UNREGISTER_THREAD, unsigned long)
 #define KMUX_REGISTER_KERNEL_CPU _IOR(0, KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU, unsigned long)
 #define KMUX_UNREGISTER_KERNEL_CPU _IOR(0, KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU, unsigned long)
+#define KMUX_CONFIGURE_KERNEL _IOR(0, KMUX_IOCTL_CMD_CONFIGURE_KERNEL, unsigned long)
 
 #define KMUX_GET_KERNEL_INDEX _IOR(0, KMUX_IOCTL_CMD_GET_KERNEL_INDEX, unsigned long)
 
@@ -38,12 +41,14 @@
 
 /* Handler array definition */
 typedef int (*kmux_kernel_syscall_handler)(struct pt_regs *);
+typedef int (*kmux_kernel_config_handler)(char *);
 
 /* Data structures */
 // Direct kernel call doesn't return to host OS. Indirect kernel call returns control to host OS
 struct kernel_entry {
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	kmux_kernel_syscall_handler kernel_syscall_handler;
+	kmux_kernel_config_handler kernel_config_handler;
 };
 
 typedef struct kernel_entry kernel_entry;
@@ -69,5 +74,12 @@ struct cpu_registration_entry {
 };
 
 typedef struct cpu_registration_entry cpu_registration_entry;
+
+struct kernel_config {
+    char kernel_name[MAX_KERNEL_NAME_LENGTH];
+    char config_buffer[MAX_KERNEL_CONFIG_BUFFER_LENGTH];
+};
+
+typedef struct kernel_config kernel_config;
 
 #endif
