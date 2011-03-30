@@ -303,15 +303,17 @@ static int unregister_kernel_cpu(int kernel_index, int cpu) {
 	}
 }
 
-int configure_kernel(char *kernel_name, char *config_buffer) {
-    int kernel_index;
+int configure_kernel(int kernel_index, char *config_buffer) {
     kmux_kernel_config_handler kernel_config_handler;
 
-    kernel_index = get_kernel_index(kernel_name);
+    if (validate_kernel_index(kernel_index) < 0) {
+        printk("configure_kernel: Invalid kernel index %d", kernel_index);
+        return -EINVAL;
+    }
 
     // Host kernel does not accept configuration
-    if (kernel_index == KMUX_HOST_KERNEL_INDEX || kernel_index < 0) {
-        return kernel_index;
+    if (kernel_index == KMUX_HOST_KERNEL_INDEX) {
+        return -EINVAL;
     }
 
     kernel_config_handler = kernel_register[kernel_index].kernel_config_handler;
@@ -503,7 +505,7 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
                 return -EFAULT;
             }
 
-            return configure_kernel(config_info.kernel_name, config_info.config_buffer);
+            return configure_kernel(config_info.kernel_index, config_info.config_buffer);
         }
         default:
 		{

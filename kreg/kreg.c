@@ -7,7 +7,8 @@
 #include "../kern_mux.h"
 #include "../kmul/kmul.h"
 
-#define BUFFER_LENGTH 100
+#define BUFFER_LENGTH 1024
+#define SCAN_REGEX_LENGTH 64
 
 void initialize_kreg(void) {
 	// Set affinity of this utility to CPU dedicated to Linux
@@ -21,7 +22,7 @@ void initialize_kreg(void) {
 int main(void) {
     initialize_kreg();
 
-    char proc_path[50], input_buffer[BUFFER_LENGTH], kernel_name[MAX_KERNEL_NAME_LENGTH];
+    char proc_path[50], input_buffer[BUFFER_LENGTH], scan_regex[SCAN_REGEX_LENGTH], kernel_name[MAX_KERNEL_NAME_LENGTH], config_buffer[MAX_KERNEL_CONFIG_BUFFER_LENGTH];
     int kmux_command, proc_desc, ret_val, pgid, cpu, var_param, items_scanned;
 
     printf("Starting kmux registration module\n");
@@ -39,28 +40,33 @@ int main(void) {
 
         fgets(input_buffer, BUFFER_LENGTH, stdin);
 
-        items_scanned = sscanf(input_buffer, "%d %s %d", &kmux_command, kernel_name, &var_param);
+        items_scanned = sscanf(input_buffer, "%d%*[ ]", &kmux_command);
+
+        if (items_scanned != 1) {
+            printf("Could not find command\n");
+            continue;
+        }
 
         if (kmux_command == -1) {
             break;
         }
 
-        if (items_scanned != 3) {
-            printf("Items scanned %d. Invalid parameter: %s\n", items_scanned, input_buffer);
-            continue;
-        }
-
-        if (!kmux_command || kmux_command < KMUX_IOCTL_CMD_REGISTER_THREAD || kmux_command > KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU) {
+        if (!kmux_command || kmux_command < KMUX_IOCTL_CMD_REGISTER_THREAD || kmux_command > KMUX_IOCTL_CMD_CONFIGURE_KERNEL) {
             printf("Invalid kmux command: %d\n\n", kmux_command);
             continue;
         }
 
         printf("kmux command: %d\n", kmux_command);
-        printf("Kernel name: %s\n", kernel_name);
 
         if (kmux_command == KMUX_IOCTL_CMD_REGISTER_THREAD || kmux_command == KMUX_IOCTL_CMD_UNREGISTER_THREAD) {
-            pgid = var_param;
+            items_scanned = sscanf(input_buffer, "%*d%s%*[ ]%d", kernel_name, &pgid);
 
+            if (items_scanned != 2) {
+                printf("Items scanned %d. Invalid parameter(s): %s\n", items_scanned, input_buffer);
+                continue;
+            }
+
+            printf("Kernel name: %s\n", kernel_name);
             printf("PGID: %d\n", pgid);
 
             if (kmux_command == KMUX_IOCTL_CMD_REGISTER_THREAD) {
@@ -69,14 +75,33 @@ int main(void) {
                 unregister_thread(proc_desc, kernel_name, pgid);
             }
         } else if (kmux_command == KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU || kmux_command == KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU) {
-            cpu = var_param;
+            items_scanned = sscanf(input_buffer, "%*d%s%*[ ]%d", kernel_name, &cpu);
 
+            if (items_scanned != 2) {
+                printf("Items scanned %d. Invalid parameter(s): %s\n", items_scanned, input_buffer);
+                continue;
+            }
+
+            printf("Kernel name: %s\n", kernel_name);
             printf("CPU: %d\n", cpu);
+
             if (kmux_command == KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU) {
                 register_kernel_cpu(proc_desc, kernel_name, cpu);
             } else {
                 unregister_kernel_cpu(proc_desc, kernel_name, cpu);
             }
+        } else if (kmux_command == KMUX_IOCTL_CMD_CONFIGURE_KERNEL) {
+            sprintf(scan_regex, "%%*d%%s%%*[ ]%%%d[^\n]", MAX_KERNEL_CONFIG_BUFFER_LENGTH);
+            items_scanned = sscanf(input_buffer, scan_regex, kernel_name, config_buffer);
+
+            if (items_scanned != 2) {
+                printf("Items scanned %d. Invalid parameter(s): %s\n", items_scanned, input_buffer);
+                continue;
+            }
+
+            printf("Kernel name: %s\n", kernel_name);
+            printf("Config buffer: %s\n", config_buffer);
+            configure_kernel(proc_desc, kernel_name, config_buffer);
         }
 
         printf("\n");

@@ -8,7 +8,7 @@
 #define MAX_KERNEL_SUPPORT 64
 #define MAX_THREAD_SUPPORT 16384 // 2^14
 #define MAX_KERNEL_NAME_LENGTH 64
-#define MAX_KERNEL_CONFIG_BUFFER_LENGTH 1024
+#define MAX_KERNEL_CONFIG_BUFFER_LENGTH 512
 
 #define KMUX_PROC_NAME "kmux"
 #define KMUX_PROC_NUMBER 0223
@@ -76,7 +76,7 @@ struct cpu_registration_entry {
 typedef struct cpu_registration_entry cpu_registration_entry;
 
 struct kernel_config {
-    char kernel_name[MAX_KERNEL_NAME_LENGTH];
+    int kernel_index;
     char config_buffer[MAX_KERNEL_CONFIG_BUFFER_LENGTH];
 };
 

@@ -191,7 +191,7 @@ int unregister_thread(int proc_desc, char *kernel_name, int pgid) {
 
 int register_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
     int ret_val, kernel_index;
-    cpu_registration_entry * cpu_registration_info;
+    cpu_registration_entry *cpu_registration_info;
 
     if (cpu < 0 || cpu >= get_total_cpus()) {
         printf("Invalid CPU: %d\n", cpu);
@@ -227,7 +227,7 @@ int register_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
 
 int unregister_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
     int ret_val, kernel_index;
-    cpu_registration_entry * cpu_registration_info;
+    cpu_registration_entry *cpu_registration_info;
 
     if (cpu < 0 || cpu >= get_total_cpus()) {
         printf("Invalid CPU: %d\n", cpu);
@@ -250,6 +250,34 @@ int unregister_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
     }
 
     free(cpu_registration_info);
+    return ret_val;
+}
+
+int configure_kernel(int proc_desc, char *kernel_name, char *config_buffer) {
+    int ret_val, kernel_index;
+    kernel_config *config_info;
+
+    if ((ret_val = kernel_index = get_kernel_index(proc_desc, kernel_name)) < 0) {
+        printf("Invalid kernel name: %s\n", kernel_name);
+        return ret_val;
+    }
+
+    if (!config_buffer || strlen(config_buffer) > MAX_KERNEL_CONFIG_BUFFER_LENGTH) {
+        printf("Invalid config buffer found\n");
+        return -1;
+    }
+
+    config_info = (kernel_config *)malloc(sizeof(kernel_config));
+    config_info->kernel_index = kernel_index;
+    strcpy(config_buffer, config_info->config_buffer);
+
+    if ((ret_val = ioctl(proc_desc, KMUX_CONFIGURE_KERNEL, config_info)) < 0) {
+        printf("Could not configure kernel. ioctl returned %d\n", ret_val);
+    } else {
+        printf("Performed kernel configure ioctl. Return value: %d\n", ret_val);
+    }
+
+    free(config_info);
     return ret_val;
 }
 
