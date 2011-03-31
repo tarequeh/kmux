@@ -48,13 +48,11 @@ static int set_syscall_allowed(int syscall) {
 }
 
 // Config buffer contains either of the following structures:
-// next_kernel = next_kernel_name
-// allowed_syscalls = 45, 67, 23, 178
-// TODO: Take multiple configs at the same time
+// (next_kernel = linux), (allowed_syscalls = 45, 67, 23, 178)
 int sandbox_config_handler(char *config_buffer) {
     int syscall_number, kernel_index;
-    char directive[DIRECTIVE_MAX_LENGTH], kernel_name[MAX_KERNEL_NAME_LENGTH], syscall_list[MAX_KERNEL_CONFIG_BUFFER_LENGTH];
-    char *trimmed_directive, *trimmed_kernel_name, *trimmed_syscall_list, *syscall_numbers, *syscall_numbers_tracker, *trimmed_syscall_number;
+    char directive[DIRECTIVE_MAX_LENGTH], kernel_name[MAX_KERNEL_NAME_LENGTH], safe_config_buffer[MAX_KERNEL_CONFIG_BUFFER_LENGTH];
+    char *kernel_configs, *kernel_configs_tracker, *config_tokens, *config_tokens_tracker, *syscall_numbers, *syscall_numbers_tracker, *trimmed_config, *trimmed_config_token, *trimmed_syscall;
 
     memset(directive, 0, DIRECTIVE_MAX_LENGTH);
     memset(kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
@@ -71,65 +69,83 @@ int sandbox_config_handler(char *config_buffer) {
         return -EINVAL;
     }
 
-    // Process buffer
-    if (sscanf(config_buffer, "%s[^=]", directive) < 0) {
-        printk("sandbox_config_handler: Error reading directive from config buffer\n");
-        return -EINVAL;
-    }
+    // strtok_r writes into buffer, so copy it into a safe location
+    memset(safe_config_buffer, 0, MAX_KERNEL_CONFIG_BUFFER_LENGTH);
+    strcpy(safe_config_buffer, config_buffer);
 
-    trimmed_directive = trim(directive, ' ');
+    printk("sandbox_config_handler: Parsing config buffer: %s\n", safe_config_buffer);
 
-    if (strcmp(trimmed_directive, DIRECTIVE_NEXT_KERNEL) == 0) {
-        if (sscanf(config_buffer, "%*s[^=]%s[^\n]", kernel_name) < 0) {
-            printk("sandbox_config_handler: Error reading next kernel name config buffer\n");
-            return -EINVAL;
-        }
+    kernel_configs = strtok_r(safe_config_buffer, "()", &kernel_configs_tracker);
 
-        trimmed_kernel_name = trim(kernel_name, ' ');
-        if (strlen(trimmed_kernel_name) == 0) {
-            printk("sandbox_config_handler: Found empty kernel name\n");
-            return -EINVAL;
-        }
+    while (kernel_configs != NULL) {
+        trimmed_config = trim(kernel_configs, ' ');
+        trimmed_config = ltrim(trimmed_config, ',');
+        trimmed_config = trim(trimmed_config, ' ');
 
-        kernel_index = get_kernel_index(trimmed_kernel_name);
-        if (kernel_index < 0) {
-            printk("sandbox_config_handler: Invalid next kernel name: %s\n", trimmed_kernel_name);
-            return -EINVAL;
-        }
-    } else if (strcmp(directive, DIRECTIVE_ALLOWED_SYSCALLS) == 0) {
-        if (sscanf(config_buffer, "%*s[^=]%s[^\n]", syscall_list) < 0) {
-            printk("sandbox_config_handler: Error reading syscall list from config buffer\n");
-            return -EINVAL;
-        }
+        if (strlen(trimmed_config) > 0) {
+            printk("sandbox_config_handler: Config piece: %s\n", trimmed_config);
+            config_tokens = strtok_r(trimmed_config, "=", &config_tokens_tracker);
 
-        trimmed_syscall_list = trim(syscall_list, ' ');
+            if (config_tokens != NULL) {
+                trimmed_config_token = trim(config_tokens, ' ');
 
-        if (strlen(trimmed_syscall_list) == 0) {
-            printk("sandbox_config_handler: Found empty syscall list\n");
-            return -EINVAL;
-        }
+                if (strlen(trimmed_config_token) > 0) {
+                    memset(directive, 0, MAX_KERNEL_NAME_LENGTH);
+                    strcpy(directive, trimmed_config_token);
 
-        syscall_numbers = strtok_r(trimmed_syscall_list, ",", &syscall_numbers_tracker);
+                    printk("sandbox_config_handler: Directive: %s\n", directive);
+                    config_tokens = strtok_r(NULL, "=", &config_tokens_tracker);
 
-        while (syscall_numbers != NULL) {
-            trimmed_syscall_number = trim(syscall_numbers, ' ');
-            if (strlen(trimmed_syscall_number) == 0) {
-                syscall_number = atoi(trimmed_syscall_number);
+                    if (config_tokens != NULL) {
+                        trimmed_config_token = trim(config_tokens, ' ');
+                        if (strlen(trimmed_config_token) > 0) {
+                            printk("sandbox_config_handler: Directive parameters: %s\n", trimmed_config_token);
+                            if (strcmp(directive, DIRECTIVE_NEXT_KERNEL) == 0) {
+                                kernel_index = get_kernel_index(trimmed_config_token);
+                                if (kernel_index < 0) {
+                                    printk("sandbox_config_handler: Invalid next kernel name: %s\n", trimmed_config_token);
+                                } else {
+                                    printk("sandbox_config_handler: Set next kernel to: %s\n", trimmed_config_token);
+                                    gnext_kernel_index = kernel_index;
+                                }
+                            } else if (strcmp(directive, DIRECTIVE_ALLOWED_SYSCALLS) == 0) {
+                                syscall_numbers = strtok_r(trimmed_config_token, ",", &syscall_numbers_tracker);
+                                while(syscall_numbers != NULL) {
+                                    trimmed_syscall = trim(syscall_numbers, ' ');
+                                    if (strlen(trimmed_syscall) > 0) {
+                                        syscall_number = atoi(trimmed_syscall);
 
-                if (syscall_number >= MIN_SYSCALL || syscall_number <= MAX_SYSCALL) {
-                    allowed_syscalls[syscall_number] = 1;
-                    printk("sandbox_config_handler: Sandbox set to allow syscall: %d\n", syscall_number);
+                                        if (syscall_number >= MIN_SYSCALL || syscall_number <= MAX_SYSCALL) {
+                                            allowed_syscalls[syscall_number] = 1;
+                                            printk("sandbox_config_handler: Added syscall: %d to allowed list\n", syscall_number);
+                                        } else {
+                                            printk("sandbox_config_handler: Invalid syscall number: %d specified for kernel: %s. Skipping\n", syscall_number, kernel_name);
+                                        }
+                                    } else {
+                                        printk("sandbox_config_handler: Found empty syscall number. Skipping\n");
+                                    }
+                                    syscall_numbers = strtok_r(NULL, ",", &syscall_numbers_tracker);
+                                }
+                            } else {
+                                printk("sandbox_config_handler: Invalid directive in configuration piece. Skipping\n");
+                            }
+                        } else {
+                            printk("sandbox_config_handler: Found empty directive parameters. Skipping\n");
+                        }
+                    } else {
+                        printk("sandbox_config_handler: Could not read directive parameters from configuration piece. Skipping\n");
+                    }
                 } else {
-                    printk("sandbox_config_handler: Invalid syscall number: %d specified. Skipping\n", syscall_number);
+                    printk("sandbox_config_handler: Found empty directive. Skipping\n");
                 }
             } else {
-                printk("sandbox_config_handler: Found empty syscall number. Skipping\n");
+                printk("sandbox_config_handler: Could not read directive from configuration piece. Skipping\n");
             }
-            syscall_numbers = strtok_r(NULL, ",", &syscall_numbers_tracker);
+        } else {
+            printk("sandbox_config_handler: Found empty configuration piece. Skipping\n");
         }
-    } else {
-        printk("sandbox_config_handler: Invalid directive: %s\n", directive);
-        return -EINVAL;
+
+        kernel_configs = strtok_r(NULL, "()", &kernel_configs_tracker);
     }
 
     return SUCCESS;
