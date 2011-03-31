@@ -320,6 +320,7 @@ int configure_kernel(int kernel_index, char *config_buffer) {
     if (kernel_config_handler == NULL) {
         return -EFAULT;
     } else {
+        printk("configure_kernel: Sending config buffer: %s to kernel: %s\n", config_buffer, kernel_register[kernel_index].kernel_name);
         return (*kernel_config_handler)(config_buffer);
     }
 }

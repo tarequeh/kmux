@@ -268,8 +268,10 @@ int configure_kernel(int proc_desc, char *kernel_name, char *config_buffer) {
     }
 
     config_info = (kernel_config *)malloc(sizeof(kernel_config));
+    memset(config_info->config_buffer, 0, MAX_KERNEL_CONFIG_BUFFER_LENGTH);
+
     config_info->kernel_index = kernel_index;
-    strcpy(config_buffer, config_info->config_buffer);
+    strcpy(config_info->config_buffer, config_buffer);
 
     if ((ret_val = ioctl(proc_desc, KMUX_CONFIGURE_KERNEL, config_info)) < 0) {
         printf("Could not configure kernel. ioctl returned %d\n", ret_val);
