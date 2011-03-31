@@ -92,7 +92,7 @@ int gnext_kernel_index = KMUX_HOST_KERNEL_INDEX;
  */
 
 int getpwd(char *buffer_out, int buffer_size) {
-    int error;
+    int ret_val;
     struct path pwd;
 
     read_lock(&current->fs->lock);
@@ -105,21 +105,22 @@ int getpwd(char *buffer_out, int buffer_size) {
 
     cwd = d_path(&pwd, buffer_out, buffer_size);
 
-    error = PTR_ERR(cwd);
+    ret_val = PTR_ERR(cwd);
     if (!IS_ERR(cwd)) {
-        error = -ERANGE;
         len = PAGE_SIZE + buffer_out - cwd;
         memcpy(buffer_out, cwd, len);
+        ret_val = SUCCESS;
     }
 
     path_put(&pwd);
-    return error;
+    return ret_val;
 }
 
 int filesys_filter_syscall_handler(struct pt_regs *regs) {
     int syscall_number = regs->ax;
 
     if(syscall_number == 5 || syscall_number == 8) {
+        int ret_val;
         char *current_directory, *copied_file_path, *file_path;
 
         file_path = (char *)regs->bx;
@@ -127,10 +128,11 @@ int filesys_filter_syscall_handler(struct pt_regs *regs) {
         if (current_directory) {
             // Open file. File name in ebx
             copied_file_path = getname(file_path);
-            if (getpwd(current_directory, PAGE_SIZE) >= 0){
-                printk("filesys_filter_syscall_handler: Current directory: %s, File path: %s\n", current_directory, copied_file_path);
+            ret_val = getpwd(current_directory, PAGE_SIZE);
+            if (ret_val < 0){
+                printk("filesys_filter_syscall_handler: Could not read current directory. getcwd returned: %d\n", ret_val);
             } else {
-                printk("filesys_filter_syscall_handler: Could not allocate memory for reading current directory\n");
+                printk("filesys_filter_syscall_handler: Current directory: %s, File path: %s\n", current_directory, copied_file_path);
             }
             putname(copied_file_path);
         } else {
