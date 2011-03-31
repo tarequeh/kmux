@@ -653,9 +653,6 @@ static void __exit kmux_exit(void) {
 	unregister_kernel_cpu(KMUX_HOST_KERNEL_INDEX, KMUX_HOST_KERNEL_CPU);
 	unregister_kernel(KMUX_DEFAULT_KERNEL_NAME);
 
-	// Free thread register
-	kfree(thread_register);
-
 	printk("Uninstalling the Kernel Multiplexer module.\n");
 	printk("#~~~~~~~~~~~~~~~~~~~~~ kmux DEBUG END ~~~~~~~~~~~~~~~~~~~~~#\n");
 	return;
