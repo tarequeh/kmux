@@ -8,7 +8,7 @@
 #include "../kern_mux.h"
 #include "../kern_string.h"
 
-#define MODULE_NAME "syscallmux"
+#define MODULE_NAME "syscall_mux"
 
 #define MIN_SYSCALL 0
 #define MAX_SYSCALL 337
@@ -26,8 +26,7 @@ int syscallmux_syscall_handler(struct pt_regs *regs) {
         printk("syscallmux_syscall_handler: Encountered invalid syscall number: %lu\n", regs->ax);
     }
 
-    //next_kernel_index = syscall_kernel_register[syscall_number];
-    next_kernel_index = KMUX_HOST_KERNEL_INDEX;
+    next_kernel_index = syscall_kernel_register[syscall_number];
 
     return next_kernel_index;
 }
@@ -87,16 +86,19 @@ int syscallmux_config_handler(char *config_buffer) {
                                 syscall_numbers = strtok_r(trimmed_config_token, ",", &syscall_numbers_tracker);
                                 while(syscall_numbers != NULL) {
                                     trimmed_syscall = trim(syscall_numbers, ' ');
-                                    syscall_number = atoi(trimmed_syscall);
+                                    if (strlen(trimmed_syscall) > 0) {
+                                        syscall_number = atoi(trimmed_syscall);
 
-                                    if (syscall_number >= MIN_SYSCALL || syscall_number <= MAX_SYSCALL) {
-                                        syscall_kernel_register[syscall_number] = kernel_index;
-                                        printk("syscallmux_config_handler: Kernel: %s added for syscall: %d\n", kernel_name, syscall_number);
-
-                                        syscall_numbers = strtok_r(NULL, ",", &syscall_numbers_tracker);
+                                        if (syscall_number >= MIN_SYSCALL || syscall_number <= MAX_SYSCALL) {
+                                            syscall_kernel_register[syscall_number] = kernel_index;
+                                            printk("syscallmux_config_handler: Kernel: %s added for syscall: %d\n", kernel_name, syscall_number);
+                                        } else {
+                                            printk("syscallmux_config_handler: Invalid syscall number: %d specified for kernel: %s. Skipping\n", syscall_number, kernel_name);
+                                        }
                                     } else {
-                                        printk("syscallmux_config_handler: Invalid syscall number: %d specified for kernel: %s. Skipping\n", syscall_number, kernel_name);
+                                        printk("syscallmux_config_handler: Found empty syscall number. Skipping\n");
                                     }
+                                    syscall_numbers = strtok_r(NULL, ",", &syscall_numbers_tracker);
                                 }
                             } else {
                                 printk("syscallmux_config_handler: Found empty syscall list. Skipping\n");

@@ -6,15 +6,16 @@
 #include <linux/smp.h>
 
 #include "../kern_mux.h"
+#include "../kern_string.h"
 
 #define MODULE_NAME "sandbox"
+
+#define MIN_SYSCALL 337
 #define MAX_SYSCALL 337
 
 #define DIRECTIVE_MAX_LENGTH 64
 #define DIRECTIVE_NEXT_KERNEL "next_kernel"
 #define DIRECTIVE_ALLOWED_SYSCALLS "allowed_syscalls"
-
-#define SCAN_REGEX_LENGTH 64
 
 extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler);
 extern int unregister_kernel(char* kernel_name);
@@ -49,9 +50,11 @@ static int set_syscall_allowed(int syscall) {
 // Config buffer contains either of the following structures:
 // next_kernel = next_kernel_name
 // allowed_syscalls = 45, 67, 23, 178
+// TODO: Take multiple configs at the same time
 int sandbox_config_handler(char *config_buffer) {
-    char directive[DIRECTIVE_MAX_LENGTH], kernel_name[MAX_KERNEL_NAME_LENGTH], scan_regex[SCAN_REGEX_LENGTH];
-    int syscall_number;
+    int syscall_number, kernel_index;
+    char directive[DIRECTIVE_MAX_LENGTH], kernel_name[MAX_KERNEL_NAME_LENGTH], syscall_list[MAX_KERNEL_CONFIG_BUFFER_LENGTH];
+    char *trimmed_directive, *trimmed_kernel_name, *trimmed_syscall_list, *syscall_numbers, *syscall_numbers_tracker, *trimmed_syscall_number;
 
     memset(directive, 0, DIRECTIVE_MAX_LENGTH);
     memset(kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
@@ -69,31 +72,60 @@ int sandbox_config_handler(char *config_buffer) {
     }
 
     // Process buffer
-    memset(scan_regex, 0, SCAN_REGEX_LENGTH);
-    sprintf(scan_regex, "%%%d[^ =]%%*[ =]", DIRECTIVE_MAX_LENGTH);
-
-    if (sscanf(config_buffer, scan_regex, directive) < 0) {
+    if (sscanf(config_buffer, "%s[^=]", directive) < 0) {
         printk("sandbox_config_handler: Error reading directive from config buffer\n");
         return -EINVAL;
     }
 
-    if (strcmp(directive, DIRECTIVE_NEXT_KERNEL) == 0) {
-        memset(scan_regex, 0, SCAN_REGEX_LENGTH);
-        sprintf(scan_regex, "%%%d", MAX_KERNEL_NAME_LENGTH);
+    trimmed_directive = trim(directive, ' ');
 
-        if (sscanf(config_buffer, scan_regex, kernel_name) < 0) {
+    if (strcmp(trimmed_directive, DIRECTIVE_NEXT_KERNEL) == 0) {
+        if (sscanf(config_buffer, "%*s[^=]%s[^\n]", kernel_name) < 0) {
             printk("sandbox_config_handler: Error reading next kernel name config buffer\n");
             return -EINVAL;
         }
-    } else if (strcmp(directive, DIRECTIVE_ALLOWED_SYSCALLS) == 0) {
-        while (sscanf(config_buffer, "%d%*[ ,]", &syscall_number) > 0) {
-            if (syscall_number < 0 || syscall_number > MAX_SYSCALL) {
-                printk("syscallmux_config_handler: Invalid syscall number: %d specified. Skipping\n", syscall_number);
-                continue;
-            }
 
-            allowed_syscalls[syscall_number] = 1;
-            printk("syscallmux_config_handler: Sandbox set to allow syscall: %d\n", syscall_number);
+        trimmed_kernel_name = trim(kernel_name, ' ');
+        if (strlen(trimmed_kernel_name) == 0) {
+            printk("sandbox_config_handler: Found empty kernel name\n");
+            return -EINVAL;
+        }
+
+        kernel_index = get_kernel_index(trimmed_kernel_name);
+        if (kernel_index < 0) {
+            printk("sandbox_config_handler: Invalid next kernel name: %s\n", trimmed_kernel_name);
+            return -EINVAL;
+        }
+    } else if (strcmp(directive, DIRECTIVE_ALLOWED_SYSCALLS) == 0) {
+        if (sscanf(config_buffer, "%*s[^=]%s[^\n]", syscall_list) < 0) {
+            printk("sandbox_config_handler: Error reading syscall list from config buffer\n");
+            return -EINVAL;
+        }
+
+        trimmed_syscall_list = trim(syscall_list, ' ');
+
+        if (strlen(trimmed_syscall_list) == 0) {
+            printk("sandbox_config_handler: Found empty syscall list\n");
+            return -EINVAL;
+        }
+
+        syscall_numbers = strtok_r(trimmed_syscall_list, ",", &syscall_numbers_tracker);
+
+        while (syscall_numbers != NULL) {
+            trimmed_syscall_number = trim(syscall_numbers, ' ');
+            if (strlen(trimmed_syscall_number) == 0) {
+                syscall_number = atoi(trimmed_syscall_number);
+
+                if (syscall_number >= MIN_SYSCALL || syscall_number <= MAX_SYSCALL) {
+                    allowed_syscalls[syscall_number] = 1;
+                    printk("sandbox_config_handler: Sandbox set to allow syscall: %d\n", syscall_number);
+                } else {
+                    printk("sandbox_config_handler: Invalid syscall number: %d specified. Skipping\n", syscall_number);
+                }
+            } else {
+                printk("sandbox_config_handler: Found empty syscall number. Skipping\n");
+            }
+            syscall_numbers = strtok_r(NULL, ",", &syscall_numbers_tracker);
         }
     } else {
         printk("sandbox_config_handler: Invalid directive: %s\n", directive);
