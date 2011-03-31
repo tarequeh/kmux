@@ -91,63 +91,55 @@ int gnext_kernel_index = KMUX_HOST_KERNEL_INDEX;
  *
  */
 
-int getpwd(char *buffer_out) {
+int getpwd(char *buffer_out, int buffer_size) {
     int error;
-    struct path pwd, root;
+    struct path pwd;
 
     read_lock(&current->fs->lock);
     pwd = current->fs->pwd;
     path_get(&pwd);
-    root = current->fs->root;
-    path_get(&root);
     read_unlock(&current->fs->lock);
 
-    error = -ENOENT;
-    spin_lock(&dcache_lock);
-    if (!d_unlinked(pwd.dentry)) {
-        unsigned long len;
-        struct path tmp = root;
-        char *cwd;
+    unsigned long len;
+    char *cwd;
 
-        cwd = __d_path(&pwd, &tmp, buffer_out, PAGE_SIZE);
-        spin_unlock(&dcache_lock);
+    cwd = d_path(&pwd, buffer_out, buffer_size);
 
-        error = PTR_ERR(cwd);
-        if (!IS_ERR(cwd)) {
-            error = -ERANGE;
-            len = PAGE_SIZE + buffer_out - cwd;
-            memcpy(buffer_out, cwd, len);
-        }
-    } else {
-        spin_unlock(&dcache_lock);
+    error = PTR_ERR(cwd);
+    if (!IS_ERR(cwd)) {
+        error = -ERANGE;
+        len = PAGE_SIZE + buffer_out - cwd;
+        memcpy(buffer_out, cwd, len);
     }
 
     path_put(&pwd);
-    path_put(&root);
     return error;
 }
 
 int filesys_filter_syscall_handler(struct pt_regs *regs) {
-    int ret_val = gnext_kernel_index;
     int syscall_number = regs->ax;
 
     if(syscall_number == 5 || syscall_number == 8) {
-        char *copied_file_path;
-        const char *file_path = (const char *)regs->bx;
-        char *current_directory = (char *) __get_free_page(GFP_USER);
-        if (!current_directory) {
-            return -ENOMEM;
-        }
-        // Open file. File name in ebx
-        copied_file_path = getname(file_path);
-        getpwd(current_directory);
+        char *current_directory, *copied_file_path, *file_path;
 
-        printk("filesys_filter_syscall_handler: Current directory: %s, File path: %s\n", current_directory, copied_file_path);
-        putname(copied_file_path);
+        file_path = (char *)regs->bx;
+        current_directory  = (char *) __get_free_page(GFP_USER);
+        if (current_directory) {
+            // Open file. File name in ebx
+            copied_file_path = getname(file_path);
+            if (getpwd(current_directory, PAGE_SIZE) >= 0){
+                printk("filesys_filter_syscall_handler: Current directory: %s, File path: %s\n", current_directory, copied_file_path);
+            } else {
+                printk("filesys_filter_syscall_handler: Could not allocate memory for reading current directory\n");
+            }
+            putname(copied_file_path);
+        } else {
+            printk("filesys_filter_syscall_handler: Could not allocate memory for reading current directory\n");
+        }
         free_page((unsigned long) current_directory);
     }
 
-    return ret_val;
+    return gnext_kernel_index;
 }
 
 int register_path(int pid, char* path) {
