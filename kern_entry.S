@@ -91,5 +91,4 @@ ENTRY(save_syscall_environment)
 .globl exit_syscall_environment
 .align 16
 exit_syscall_environment:
-    movl $-EPERM, %eax
     sti

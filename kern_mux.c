@@ -351,7 +351,7 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
     }
 
     // Call through the chain of kernels until someone wants to exit or pass control to host
-	while ((kernel_index != KMUX_HOST_KERNEL_INDEX) && (kernel_index != KMUX_SYSCALL_EXIT_INDEX)) {
+	while ((kernel_index != KMUX_HOST_KERNEL_INDEX) && (kernel_index < 0)) {
         // Validate next kernel
         if (validate_kernel_index(kernel_index) < 0) {
             // TODO: For now we pass control to host for invalid kernels, maybe we should just exit
@@ -381,6 +381,8 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
     if (kernel_index == KMUX_HOST_KERNEL_INDEX) {
         *tss_ip_location = (unsigned long)ghost_sysenter_addr;
     } else {
+        // Update stack with error value
+        regs->ax = (unsigned long)kernel_index;
         *tss_ip_location = (unsigned long)gsysexit_addr;
     }
 
