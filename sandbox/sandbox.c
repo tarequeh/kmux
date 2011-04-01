@@ -34,7 +34,7 @@ int sandbox_syscall_handler(struct pt_regs *regs) {
     if (allowed_syscalls[syscall_number]) {
         return gnext_kernel_index;
     } else {
-        return KMUX_SYSCALL_EXIT_INDEX;
+        return -EPERM;
     }
 }
 
