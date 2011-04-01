@@ -103,11 +103,11 @@ static int lookup_kernel_index(int pgid) {
     int index;
     index = find_thread_register_slot(pgid);
     if (thread_register[index].pgid == -1) {
-        // pgid is in register
-        return thread_register[index].kernel_index;
-    } else {
         // pgid is not in register
         return -EINVAL;
+    } else {
+        // pgid is in register
+        return thread_register[index].kernel_index;
     }
 }
 
@@ -223,12 +223,8 @@ static int unregister_thread(int pgid) {
     printk("unregister_thread: Unregistering thread: %d\n", pgid);
 
     index = find_thread_register_slot(pgid);
-    if (index < 0) {
-        printk("register_thread: Failed to register thread: %d. Registry full?\n", pgid);
-        return -ENOSPC;
-    }
 
-    if (thread_register[index].pgid != -1) {
+    if ((index >= 0) && (thread_register[index].pgid != -1)) {
         kernel_index = thread_register[index].kernel_index;
         printk("unregister_thread: Unregistering thread %d from kernel %s\n", pgid, kernel_register[kernel_index].kernel_name);
 
@@ -327,30 +323,29 @@ int configure_kernel(int kernel_index, char *config_buffer) {
 
 // NOTE: No print business in this function. Critical for system performance
 void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
-	int index, kernel_index, pgid;
+	int kernel_index, pgid;
 	kmux_kernel_syscall_handler kmux_sysenter_handler;
 	struct pid *pid;
 
 	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
 	unsigned long *tss_ip_location = NULL;
 
-	// Obtain current process group ID
-	pid = task_pgrp(current);
-	pgid = pid->numbers[0].nr;
+	// Try thread registration lookup by thread pid
+	if ((kernel_index = lookup_kernel_index(current->pid)) < 0) {
+	    // Try thread registration lookup by thread group ID
+	    if ((current->pid == current->tgid) || (kernel_index = lookup_kernel_index(current->tgid)) < 0) {
+	        // Try thread registration lookup by process group ID
+	        pid = task_pgrp(current);
+	        pgid = pid->numbers[0].nr;
+	        kernel_index = lookup_kernel_index(pgid);
+	    }
+	}
 
-    for(index = 0; index < MAX_THREAD_SUPPORT; index++){
-        if (thread_register[index].pgid == pgid) {
-            kernel_index = thread_register[index].kernel_index;
-            break;
-        }
-    }
+	if (kernel_index < 0) {
+	    kernel_index = KMUX_HOST_KERNEL_INDEX;
+	}
 
-    if (index == MAX_THREAD_SUPPORT) {
-        // Thread not registered. Host OS will handle.
-        kernel_index = KMUX_HOST_KERNEL_INDEX;
-    }
-
-    // Call through the chain of kernels until someone wants to exit or pass control to host
+	// Call through the chain of kernels until someone wants to exit or pass control to host
 	while ((kernel_index > 0) && (kernel_index != KMUX_HOST_KERNEL_INDEX)) {
         // Validate next kernel
         if (validate_kernel_index(kernel_index) < 0) {
