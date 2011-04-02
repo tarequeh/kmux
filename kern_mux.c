@@ -16,6 +16,7 @@
 #include <linux/string.h>
 
 #include "kern_mux.h"
+#include "kern_utils.h"
 
 #define MODULE_NAME "kernel_multiplexer"
 
@@ -66,20 +67,6 @@ static int validate_kernel_index(int kernel_index) {
 }
 
 /* Hash table functions */
-
-// Jenkins 32 bit integer has
-static unsigned int j32int_hash(int key) {
-    unsigned int hashed_key = (unsigned int)key;
-    hashed_key = (hashed_key + 0x7ed55d16) + (hashed_key << 12);
-    hashed_key = (hashed_key ^ 0xc761c23c) ^ (hashed_key >> 19);
-    hashed_key = (hashed_key + 0x165667b1) + (hashed_key);
-    hashed_key = (hashed_key + 0xd3a2646c) ^ (hashed_key << 9);
-    hashed_key = (hashed_key + 0xfd7046c5) + (hashed_key);
-    hashed_key = (hashed_key ^ 0xb55a4f09) ^ (hashed_key >> 16);
-    return hashed_key;
-}
-
-
 static int find_thread_register_slot(int pgid) {
     int index, hash_tracker;
 

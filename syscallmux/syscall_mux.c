@@ -6,7 +6,7 @@
 #include <linux/string.h>
 
 #include "../kern_mux.h"
-#include "../kern_string.h"
+#include "../kern_utils.h"
 
 #define MODULE_NAME "syscall_mux"
 

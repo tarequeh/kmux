@@ -10,7 +10,7 @@
 #include <linux/smp.h>
 
 #include "../kern_mux.h"
-#include "../kern_string.h"
+#include "../kern_utils.h"
 
 #define MODULE_NAME "filesys_filter"
 
@@ -91,17 +91,16 @@ int gnext_kernel_index = KMUX_HOST_KERNEL_INDEX;
  *
  */
 
-int getpwd(char *buffer_out, int buffer_size) {
+static int getpwd(char *buffer_out, int buffer_size) {
     int ret_val;
     struct path pwd;
+    unsigned long len;
+    char *cwd;
 
     read_lock(&current->fs->lock);
     pwd = current->fs->pwd;
     path_get(&pwd);
     read_unlock(&current->fs->lock);
-
-    unsigned long len;
-    char *cwd;
 
     cwd = d_path(&pwd, buffer_out, buffer_size);
 
@@ -116,32 +115,89 @@ int getpwd(char *buffer_out, int buffer_size) {
     return ret_val;
 }
 
-int filesys_filter_syscall_handler(struct pt_regs *regs) {
-    int syscall_number = regs->ax;
+/* Hash table functions */
+static int find_path_register_slot(int pid) {
+    int index, hash_tracker;
 
-    if(syscall_number == 5 || syscall_number == 8) {
-        int ret_val;
-        char *current_directory, *copied_file_path, *file_path;
+    index = (int)(j32int_hash(pid) % MAX_PATH_SUPPORT);
 
-        file_path = (char *)regs->bx;
-        current_directory  = (char *) __get_free_page(GFP_USER);
-        if (current_directory) {
-            // Open file. File name in ebx
-            copied_file_path = getname(file_path);
-            ret_val = getpwd(current_directory, PAGE_SIZE);
-            if (ret_val < 0){
-                printk("filesys_filter_syscall_handler: Could not read current directory. getcwd returned: %d\n", ret_val);
-            } else {
-                printk("filesys_filter_syscall_handler: Current directory: %s, File path: %s\n", current_directory, copied_file_path);
-            }
-            putname(copied_file_path);
-        } else {
-            printk("filesys_filter_syscall_handler: Could not allocate memory for reading current directory\n");
+    // Under no circumstance hash_tracker will exceed MAX_PATH_SUPPORT
+    hash_tracker = 0;
+    while(hash_tracker < MAX_PATH_SUPPORT) {
+        // Return index on empty or match
+        if (path_register[index].pid == -1 || path_register[index].pid) {
+            return index;
         }
-        free_page((unsigned long) current_directory);
+        index = (index + 1) % MAX_PATH_SUPPORT;
+        hash_tracker++;
     }
 
-    return gnext_kernel_index;
+    return -ENOSPC;
+}
+
+static char *lookup_path(int pid) {
+    int index;
+    index = find_path_register_slot(pid);
+    if (path_register[index].pid == -1) {
+        // pid is not in register
+        return NULL;
+    } else {
+        // pid is in register
+        return path_register[index].path;
+    }
+}
+
+int filesys_filter_syscall_handler(struct pt_regs *regs) {
+    int ret_val = gnext_kernel_index, syscall_number = regs->ax;
+
+    if(syscall_number == 5 || syscall_number == 8) {
+        char *normalized_path, *copied_file_path, *file_path, *restricted_path, *matched_path;
+
+        file_path = (char *)regs->bx;
+        copied_file_path = getname(file_path);
+        normalized_path  = (char *) __get_free_page(GFP_ATOMIC);
+
+        if (!copied_file_path || strlen(copied_file_path) == 0) {
+            printk("filesys_filter_syscall_handler: Could not read user file path\n");
+            ret_val = -EINVAL;
+        }
+
+        if (!normalized_path) {
+            printk("filesys_filter_syscall_handler: Could not allocate memory for reading current directory\n");
+            ret_val = -ENOMEM;
+        }
+
+        if (ret_val >= 0) {
+            if (copied_file_path[0] != '/') {
+                ret_val = getpwd(normalized_path, PAGE_SIZE);
+                if (ret_val < 0){
+                    printk("filesys_filter_syscall_handler: Could not read current directory. getcwd returned: %d\n", ret_val);
+                    ret_val = -EFAULT;
+                } else {
+                    printk("filesys_filter_syscall_handler: Current directory: %s, File path: %s\n", normalized_path, copied_file_path);
+                    strcat(normalized_path, copied_file_path);
+                }
+            } else {
+                strcpy(normalized_path, copied_file_path);
+            }
+        }
+
+        if (ret_val >= 0) {
+            restricted_path = lookup_path(current->pid);
+            if (restricted_path) {
+                matched_path = strstr(normalized_path, restricted_path);
+                // NOTE: If normalized path doesn't start with restricted path, return error
+                if (!matched_path || matched_path != normalized_path) {
+                    ret_val = -EACCES;
+                }
+            }
+        }
+
+        free_page((unsigned long) normalized_path);
+        putname(copied_file_path);
+    }
+
+    return ret_val;
 }
 
 int register_path(int pid, char* path) {

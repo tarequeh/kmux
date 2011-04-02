@@ -1,5 +1,5 @@
-#ifndef KERN_STRING_H
-#define KERN_STRING_H
+#ifndef KERN_UTILS_H
+#define KERN_UTILS_H
 
 /* Few general purpose functions that kernel configuration handlers will need */
 
@@ -43,6 +43,18 @@ static int atoi(const char *s) {
         s++;
     }
     return k;
+}
+
+// Jenkins 32 bit integer has
+static unsigned int j32int_hash(int key) {
+    unsigned int hashed_key = (unsigned int)key;
+    hashed_key = (hashed_key + 0x7ed55d16) + (hashed_key << 12);
+    hashed_key = (hashed_key ^ 0xc761c23c) ^ (hashed_key >> 19);
+    hashed_key = (hashed_key + 0x165667b1) + (hashed_key);
+    hashed_key = (hashed_key + 0xd3a2646c) ^ (hashed_key << 9);
+    hashed_key = (hashed_key + 0xfd7046c5) + (hashed_key);
+    hashed_key = (hashed_key ^ 0xb55a4f09) ^ (hashed_key >> 16);
+    return hashed_key;
 }
 
 #endif
