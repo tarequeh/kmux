@@ -29,13 +29,11 @@ thread_entry thread_register[MAX_THREAD_SUPPORT];
 cpu_entry cpu_register[MAX_CPU_SUPPORT];
 
 extern void save_syscall_environment(void);
-extern void exit_syscall_environment(void);
 
 DEFINE_PER_CPU(unsigned long, gx86_tss);
 DEFINE_PER_CPU(unsigned long, gx86_tss_ip_location);
 
 void *ghost_sysenter_addr = NULL;
-void *gsysexit_addr = NULL;
 
 /* Array lookup and validation functions */
 int get_kernel_index(char *kernel_name) {
@@ -350,7 +348,7 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	}
 
 	// Call through the chain of kernels until someone wants to exit or pass control to host
-	while ((kernel_index > 0) && (kernel_index != KMUX_HOST_KERNEL_INDEX)) {
+	while ((kernel_index >= 0) && (kernel_index != KMUX_HOST_KERNEL_INDEX)) {
         // Validate next kernel
         if (validate_kernel_index(kernel_index) < 0) {
             // TODO: For now we pass control to host for invalid kernels, maybe we should just exit
@@ -377,15 +375,14 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
     // x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
     tss_ip_location = (unsigned long *)(*cpu_x86_tss_ip_location);
 
-    if (kernel_index == KMUX_HOST_KERNEL_INDEX) {
-        *tss_ip_location = (unsigned long)ghost_sysenter_addr;
-    } else {
+    if (kernel_index != KMUX_HOST_KERNEL_INDEX) {
         // Update stack with error value
         regs->ax = (unsigned long)kernel_index;
-        *tss_ip_location = (unsigned long)gsysexit_addr;
     }
 
-	return;
+    *tss_ip_location = (unsigned long)ghost_sysenter_addr;
+
+    return;
 }
 
 /* ------------------------- */
@@ -625,9 +622,6 @@ static int __init kmux_init(void) {
 	// ghost_sysenter_addr is available beyond this point
 
 	printk("Current host sysenter handler: %p\n", ghost_sysenter_addr);
-
-	gsysexit_addr = (void *)(&exit_syscall_environment);
-	printk("Current sysexit handler: %p\n", gsysexit_addr);
 
 	// Default kernel has to be at KMUX_HOST_KERNEL_INDEX
 	register_kernel(KMUX_DEFAULT_KERNEL_NAME, ghost_sysenter_addr, NULL);

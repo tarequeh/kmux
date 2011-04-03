@@ -73,22 +73,57 @@ VM_MASK		= 0x00020000
 ALIGN
 ENTRY(save_syscall_environment)
     movl TSS_sysenter_sp0(%esp), %esp
-
+    /*
+     * Push current_thread_info()->sysenter_return to the stack.
+     * A tiny bit of offset fixup is necessary - 4xN means the N words
+     * pushed above; +8 corresponds to copy_thread's esp0 setting.
+     */
+    pushl (TI_sysenter_return-THREAD_SIZE+8+4*0)(%esp)
     # Create space on stack to receive TSS
     pushl $0
     SAVE_ALL
 
     movl %esp, %eax
+    # TODO: Load original %ebp value. Linux stores original %ebp on user stack and then loads user stack address in %ebp
     call kmux_syscall_handler
 
     RESTORE_REGS
+
+    cmpl %eax, 0
+    jl exit_syscall_environment
+
+host_syscall_environment:
     # Restore TSS
     movl (%esp), %esp
 
     # Jump to IP in TSS containing host kernel or exit address
     jmp  *0x04(%esp)
 
-.globl exit_syscall_environment
-.align 16
 exit_syscall_environment:
+    /*
+    # 32 bit exit routine form Linux
+        PT_EIP (48) -> User IP
+        movl PT_EIP(%esp), %edx
+
+        PT_OLDESP (60) -> User Stack Pointer %ebp
+        movl PT_OLDESP(%esp), %ecx
+        xorl %ebp,%ebp
+        TRACE_IRQS_ON
+        PT_FS (36) -> Original %ds
+    1:  mov  PT_FS(%esp), %fs
+        PTGS_TO_GS
+        ENABLE_INTERRUPTS_SYSEXIT
+    */
+    # Load FS with DS
+    movl %ds, %edx
+    movl %edx, %fs
+
+    # Load User IP form stack in %edx
+    movl 4(%esp), %edx
+
+    # Load User Stack Pointer into %ecx
+    movl %ebp, %ecx
+
+    xorl %ebp, %ebp
     sti
+    sysexit
