@@ -171,9 +171,9 @@ static int get_total_cpus(void) {
 int validate_kmul_access() {
     uid_t uid = getuid(), euid = geteuid();
     if (uid < 0 || uid != euid) {
-        return SUCCESS;
-    } else {
         return -1;
+    } else {
+        return SUCCESS;
     }
 }
 
