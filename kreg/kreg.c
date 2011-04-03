@@ -22,17 +22,10 @@ void initialize_kreg(void) {
 int main(void) {
     initialize_kreg();
 
-    char proc_path[50], input_buffer[BUFFER_LENGTH], scan_regex[SCAN_REGEX_LENGTH], kernel_name[MAX_KERNEL_NAME_LENGTH], config_buffer[MAX_KERNEL_CONFIG_BUFFER_LENGTH];
-    int kmux_command, proc_desc, ret_val, pgid, cpu, var_param, items_scanned;
+    char input_buffer[BUFFER_LENGTH], scan_regex[SCAN_REGEX_LENGTH], kernel_name[MAX_KERNEL_NAME_LENGTH], config_buffer[MAX_KERNEL_CONFIG_BUFFER_LENGTH];
+    int kmux_command, ret_val, pgid, cpu, var_param, items_scanned;
 
     printf("Starting kmux registration module\n");
-    ret_val = sprintf(proc_path, "/proc/%s", KMUX_PROC_NAME);
-
-    proc_desc = open(proc_path, O_RDONLY);
-    if (proc_desc < 0) {
-        printf("Can't open proc: %s\n", KMUX_PROC_NAME);
-        exit(-1);
-    }
 
     while (1) {
         printf("kreg: command kernel_name pgid/cpu (command = -1 to exit)\n");
@@ -70,9 +63,9 @@ int main(void) {
             printf("PGID: %d\n", pgid);
 
             if (kmux_command == KMUX_IOCTL_CMD_REGISTER_THREAD) {
-                register_thread(proc_desc, kernel_name, pgid);
+                register_thread(kernel_name, pgid);
             } else {
-                unregister_thread(proc_desc, kernel_name, pgid);
+                unregister_thread(kernel_name, pgid);
             }
         } else if (kmux_command == KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU || kmux_command == KMUX_IOCTL_CMD_UNREGISTER_KERNEL_CPU) {
             items_scanned = sscanf(input_buffer, "%*d %s %d", kernel_name, &cpu);
@@ -86,9 +79,9 @@ int main(void) {
             printf("CPU: %d\n", cpu);
 
             if (kmux_command == KMUX_IOCTL_CMD_REGISTER_KERNEL_CPU) {
-                register_kernel_cpu(proc_desc, kernel_name, cpu);
+                register_kernel_cpu(kernel_name, cpu);
             } else {
-                unregister_kernel_cpu(proc_desc, kernel_name, cpu);
+                unregister_kernel_cpu(kernel_name, cpu);
             }
         } else if (kmux_command == KMUX_IOCTL_CMD_CONFIGURE_KERNEL) {
             memset(scan_regex, 0, SCAN_REGEX_LENGTH);
@@ -102,13 +95,11 @@ int main(void) {
 
             printf("Kernel name: %s\n", kernel_name);
             printf("Config buffer: %s\n", config_buffer);
-            configure_kernel(proc_desc, kernel_name, config_buffer);
+            configure_kernel(kernel_name, config_buffer);
         }
 
         printf("-------------------\n");
     }
-
-    close(proc_desc);
 
     printf("Exiting kmux registration module\n");
     return 0;
