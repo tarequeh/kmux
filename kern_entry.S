@@ -89,7 +89,7 @@ ENTRY(save_syscall_environment)
 
     RESTORE_REGS
 
-    cmpl %eax, 0
+    cmpl $0, %eax
     jl exit_syscall_environment
 
 host_syscall_environment:
