@@ -20,6 +20,7 @@
 #define DIRECTIVE_UNREGISTER_PATH "unregister_path"
 
 #define MAX_PATH_SUPPORT 512
+#define MAX_PATH_PER_PROCESS 10
 
 extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler);
 extern int unregister_kernel(char* kernel_name);
@@ -27,7 +28,8 @@ extern int get_kernel_index(char* kernel_name);
 
 struct path_entry {
     int pid;
-    char path[PATH_MAX];
+    int count;
+    char path[MAX_PATH_PER_PROCESS][PATH_MAX];
 };
 
 typedef struct path_entry path_entry;
@@ -135,7 +137,7 @@ static int find_path_register_slot(int pid) {
     return -ENOSPC;
 }
 
-static char *lookup_path(int pid) {
+static path_entry *lookup_path_entry(int pid) {
     int index;
     index = find_path_register_slot(pid);
     if (path_register[index].pid == -1) {
@@ -143,15 +145,16 @@ static char *lookup_path(int pid) {
         return NULL;
     } else {
         // pid is in register
-        return path_register[index].path;
+        return &path_register[index];
     }
 }
 
 int filesys_filter_syscall_handler(struct pt_regs *regs) {
-    int ret_val = gnext_kernel_index, syscall_number = regs->ax;
+    int index, ret_val = -EACCES, syscall_number = regs->ax;
 
     if(syscall_number == 5 || syscall_number == 8) {
-        char *normalized_path, *copied_file_path, *file_path, *restricted_path, *matched_path;
+        char *normalized_path, *copied_file_path, *file_path, *matched_path;
+        path_entry* path_info;
 
         file_path = (char *)regs->bx;
         copied_file_path = getname(file_path);
@@ -183,12 +186,16 @@ int filesys_filter_syscall_handler(struct pt_regs *regs) {
         }
 
         if (ret_val >= 0) {
-            restricted_path = lookup_path(current->pid);
-            if (restricted_path) {
-                matched_path = strstr(normalized_path, restricted_path);
-                // NOTE: If normalized path doesn't start with restricted path, return error
-                if (!matched_path || matched_path != normalized_path) {
-                    ret_val = -EACCES;
+            path_info = lookup_path_entry(current->pid);
+            if (path_info && path_info->count) {
+                for (index = 0; index < path_info->count; index++) {
+                    if (path_info->path[index][0]) {
+                        matched_path = strstr(normalized_path, path_info->path[index]);
+                        // NOTE: If normalized path doesn't start with restricted path, return error
+                        if (matched_path == normalized_path) {
+                            ret_val = gnext_kernel_index;
+                        }
+                    }
                 }
             }
         }
@@ -274,6 +281,7 @@ int filesys_filter_config_handler(char *config_buffer) {
                                 register_path(pid, path);
                             } else if (strcmp(directive, DIRECTIVE_UNREGISTER_PATH) == 0) {
                                 // TODO: Extract process ID
+                                pid = atoi(trimmed_config_token);
                                 unregister_path(pid);
                             } else {
                                 printk("filesys_filter_config_handler: Invalid directive in configuration piece. Skipping\n");
@@ -302,12 +310,16 @@ int filesys_filter_config_handler(char *config_buffer) {
 
 /* Module initialization/ termination */
 static int __init filesys_filter_init(void) {
-    int index;
+    int index, subindex;
     printk("Installing module: %s\n", MODULE_NAME);
 
     for (index = 0; index < MAX_PATH_SUPPORT; index++) {
         path_register[index].pid = -1;
-        memset(path_register[index].path, 0, PATH_MAX);
+        path_register[index].count = 0;
+
+        for (subindex = 0; subindex < MAX_PATH_PER_PROCESS; subindex++) {
+            memset(path_register[index].path[subindex], 0, PATH_MAX);
+        }
     }
 
     register_kernel(MODULE_NAME, &filesys_filter_syscall_handler, &filesys_filter_config_handler);
