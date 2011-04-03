@@ -1,4 +1,5 @@
 #include <dirent.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 #include "kmul.h"
 
 #define MAX_BUFF 100
+#define PROC_PATH_LENGTH 64
 
 /* Priority setting and idling functions */
 
@@ -22,6 +24,8 @@ static int call_getrlimit(int id, char *name)
         return -1;
     }
     printf("rlimit for %s is %d:%d (Infinity: %d)\n", name, (int)rl.rlim_cur, (int)rl.rlim_max, (int)RLIM_INFINITY);
+
+    return (int)rl.rlim_cur;
 }
 
 static int call_setrlimit(int id, unsigned long cur, unsigned long max) {
@@ -35,40 +39,77 @@ static int call_setrlimit(int id, unsigned long cur, unsigned long max) {
     }
 }
 
-static int set_high_priority(pid_t pid, int is_idle) {
+static void maximize_available_cpu() {
+    int realtime_priority = call_getrlimit(RLIMIT_RTPRIO, "RTPRIO");
+
+    if (realtime_priority != (int)RLIM_INFINITY) {
+        call_getrlimit(RLIMIT_CPU, "CPU");
+        #ifdef RLIMIT_RTTIME
+            call_getrlimit(RLIMIT_RTTIME, "RTTIME");
+        #endif
+        call_getrlimit(RLIMIT_RTPRIO, "RTPRIO");
+        call_setrlimit(RLIMIT_RTPRIO, RLIM_INFINITY, RLIM_INFINITY);
+        call_getrlimit(RLIMIT_RTPRIO, "RTPRIO");
+        call_getrlimit(RLIMIT_NICE, "NICE");
+    }
+}
+
+static int set_process_priority(pid_t pid, int priority) {
+    int ret_val, process_priority, max_priority;
     struct sched_param sp;
-    unsigned long max_limit = RLIM_INFINITY - is_idle;
 
-    call_getrlimit(RLIMIT_CPU, "CPU");
-#ifdef RLIMIT_RTTIME
-    call_getrlimit(RLIMIT_RTTIME, "RTTIME");
-#endif
-    call_getrlimit(RLIMIT_RTPRIO, "RTPRIO");
-    call_setrlimit(RLIMIT_RTPRIO, max_limit, max_limit);
-    call_getrlimit(RLIMIT_RTPRIO, "RTPRIO");
-    call_getrlimit(RLIMIT_NICE, "NICE");
+    // Retrieve PID's scheduling parameters
+    if ((ret_val = sched_getparam(pid, &sp)) < 0) {
+        printf("Error retrieving schedule parameters for process: %d\n", pid);
+        return ret_val;
+    } else {
+        sp.sched_priority = priority;
 
-    if (sched_getparam(pid, &sp) < 0) {
-        printf("Error retrieving schedule parameters\n");
+        if ((ret_val = sched_setscheduler(pid, SCHED_RR, &sp)) < 0) {
+            printf("Error setting Round Robin scheduler mode for process: %d\n", pid);
+            return ret_val;
+        } else {
+            // Test PID's scheduling to see if it was successfully set to round robin
+            if ((ret_val = sched_getparam(pid, &sp)) < 0) {
+                printf("Error retrieving schedule parameters for process: %d\n", pid);
+                return ret_val;
+            } else {
+                if (sp.sched_priority != priority) {
+                    printf("Error retrieving schedule parameters for process: %d\n", pid);
+                    return -1;
+                }
+            }
+        }
     }
 
-    sp.sched_priority = sched_get_priority_max(SCHED_RR);
+    return SUCCESS;
+}
 
-    if (sched_setscheduler(pid, SCHED_RR, &sp) < 0) {
-        printf("Error setting scheduler mode to Round Robin\n");
-        return -1;
+static int maximize_process_priority(pid_t pid, int is_idle) {
+    int ret_val, priority;
+
+    priority = sched_get_priority_max(SCHED_RR) - is_idle;
+
+    // Set realtime priority to be maximum, only need to happen once
+    maximize_available_cpu();
+
+    if((ret_val = set_process_priority(pid, priority)) < 0){
+        return ret_val;
     }
 
-    if (sched_getparam(pid, &sp) < 0) {
-        printf("Error retrieving schedule parameters\n");
+    return SUCCESS;
+}
+
+static int normalize_process_priority(pid_t pid) {
+    int ret_val, process_priority;
+    struct sched_param sp;
+
+    // For round robin scheduling, normal priority is 0
+    if((ret_val = set_process_priority(pid, 0)) < 0){
+        return ret_val;
     }
 
-    if (sp.sched_priority != sched_get_priority_max(SCHED_RR)) {
-        printf("Scheduler mode was not correctly set to Round Robin\n");
-        return -1;
-    }
-
-    return 0;
+    return SUCCESS;
 }
 
 int set_cpu_affinity(pid_t pid, int cpu) {
@@ -79,10 +120,14 @@ int set_cpu_affinity(pid_t pid, int cpu) {
     retval = sched_setaffinity(pid, sizeof(cpu_set_t), set);
     if (retval < 0) {
         printf("Could not set affinity of PID: %d with CPU: %d\n", pid, cpu);
+        return -1;
     }
+
+    return SUCCESS;
 }
 
 static pid_t spawn_idle_thread(int cpu) {
+    int ret_val;
     pid_t idle_pid = fork();
 
     if (idle_pid == 0) { // Child (idle process)
@@ -94,7 +139,9 @@ static pid_t spawn_idle_thread(int cpu) {
         // Switch affinity of idle process
         set_cpu_affinity(idle_pid, cpu);
         // Set priority of idle process to max - 1
-        set_high_priority(idle_pid, 1);
+        if ((ret_val = maximize_process_priority(idle_pid, 1)) < 0) {
+            return ret_val;;
+        }
         // TODO: If any of these 2 funcs return -1, then kill child process, return -1
         return idle_pid;
     }
@@ -121,6 +168,15 @@ static int get_total_cpus(void) {
     return cpu_count;
 }
 
+int validate_kmul_access() {
+    uid_t uid = getuid(), euid = geteuid();
+    if (uid < 0 || uid != euid) {
+        return SUCCESS;
+    } else {
+        return -1;
+    }
+}
+
 /* kmux interfacing functions */
 
 static int get_kernel_index(int proc_desc, char *kernel_name) {
@@ -135,15 +191,65 @@ static int get_kernel_index(int proc_desc, char *kernel_name) {
     return ret_val;
 }
 
-int register_thread(int proc_desc, char *kernel_name, int pgid) {
-    int ret_val, kernel_index;
+static int get_cpu_binding(int proc_desc, int kernel_index) {
+    int ret_val;
+
+    if ((ret_val = ioctl(proc_desc, KMUX_GET_CPU_BINDING, kernel_index)) < 0) {
+        printf("Could not get kernel CPU binding. ioctl returned %d\n", ret_val);
+    } else {
+        printf("Performed kernel CPU binding retrieval ioctl. Return value: %d\n", ret_val);
+    }
+
+    return ret_val;
+}
+
+int register_thread(char *kernel_name, int pgid) {
+    int proc_desc, ret_val, kernel_index, cpu_binding;
     thread_entry *thread_info;
+    char proc_path[PROC_PATH_LENGTH];
+
+    ret_val = validate_kmul_access();
+    if (ret_val < 0) {
+        return ret_val;
+    }
+
+    sprintf(proc_path, "/proc/%s", KMUX_PROC_NAME);
+
+    proc_desc = open(proc_path, O_RDONLY);
+    if (proc_desc < 0) {
+        printf("Can't open proc: %s\n", KMUX_PROC_NAME);
+        return proc_desc;
+    }
 
     if ((kernel_index = get_kernel_index(proc_desc, kernel_name)) < 0) {
         printf("Invalid kernel name: %s\n", kernel_name);
+        close(proc_desc);
         return kernel_index;
     }
 
+    if ((cpu_binding = get_cpu_binding(proc_desc, kernel_index)) < 0) {
+        printf("Error retrieving CPU binding for kernel: %s\n", kernel_name);
+        close(proc_desc);
+        return cpu_binding;
+    }
+
+    // Bind process to CPU
+    if (cpu_binding) {
+        if ((ret_val = set_cpu_affinity(pgid, cpu_binding)) < 0) {
+            close(proc_desc);
+            return ret_val;
+        }
+
+        if (kernel_index != KMUX_HOST_KERNEL_INDEX) {
+            if((ret_val = maximize_process_priority(pgid, 0)) < 0) {
+                printf("Could not maximize priority for %d\n", pgid);
+                close(proc_desc);
+                return ret_val;
+            }
+        }
+    }
+
+    // Regardless of CPU binding, add process binding in KMux
     thread_info = (thread_entry *)malloc(sizeof(thread_entry));
     thread_info->kernel_index = kernel_index;
     thread_info->pgid = pgid;
@@ -155,20 +261,28 @@ int register_thread(int proc_desc, char *kernel_name, int pgid) {
     }
 
     free(thread_info);
-
-    if (ret_val == 0) { // THread registration was successful
-        // Threads that run with host do not need to be prioritized via kmux
-        if (kernel_index != KMUX_HOST_KERNEL_INDEX) {
-            set_high_priority(pgid, 0);
-        }
-    }
+    close(proc_desc);
 
     return ret_val;
 }
 
-int unregister_thread(int proc_desc, char *kernel_name, int pgid) {
-    int ret_val, kernel_index;
+int unregister_thread(char *kernel_name, int pgid) {
+    int proc_desc, ret_val, kernel_index;
     thread_entry *thread_info;
+    char proc_path[PROC_PATH_LENGTH];
+
+    ret_val = validate_kmul_access();
+    if (ret_val < 0) {
+        return ret_val;
+    }
+
+    sprintf(proc_path, "/proc/%s", KMUX_PROC_NAME);
+
+    proc_desc = open(proc_path, O_RDONLY);
+    if (proc_desc < 0) {
+        printf("Can't open proc: %s\n", KMUX_PROC_NAME);
+        return proc_desc;
+    }
 
     if ((kernel_index = get_kernel_index(proc_desc, kernel_name)) < 0) {
         printf("Invalid kernel name: %s\n", kernel_name);
@@ -185,13 +299,35 @@ int unregister_thread(int proc_desc, char *kernel_name, int pgid) {
         printf("Performed thread unregister ioctl. Return value: %d\n", ret_val);
     }
 
+    if (ret_val == SUCCESS) { // Thread deregistration was successful
+        if((ret_val = normalize_process_priority(pgid)) < 0) {
+            printf("Could not normalize priority for %d\n", pgid);
+        }
+    }
+
     free(thread_info);
+    close(proc_desc);
+
     return ret_val;
 }
 
-int register_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
-    int ret_val, kernel_index;
+int register_kernel_cpu(char *kernel_name, int cpu) {
+    int proc_desc, ret_val, kernel_index;
     cpu_registration_entry *cpu_registration_info;
+    char proc_path[PROC_PATH_LENGTH];
+
+    ret_val = validate_kmul_access();
+    if (ret_val < 0) {
+        return ret_val;
+    }
+
+    sprintf(proc_path, "/proc/%s", KMUX_PROC_NAME);
+
+    proc_desc = open(proc_path, O_RDONLY);
+    if (proc_desc < 0) {
+        printf("Can't open proc: %s\n", KMUX_PROC_NAME);
+        return proc_desc;
+    }
 
     if (cpu < 0 || cpu >= get_total_cpus()) {
         printf("Invalid CPU: %d\n", cpu);
@@ -219,15 +355,32 @@ int register_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
         // Host processors do not need to have idle threads
         if (kernel_index != KMUX_HOST_KERNEL_INDEX) {
             spawn_idle_thread(cpu);
+            // TODO: Save idle thread PID in cpu registry
         }
     }
 
+    close(proc_desc);
     return ret_val;
 }
 
-int unregister_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
-    int ret_val, kernel_index;
+int unregister_kernel_cpu(char *kernel_name, int cpu) {
+    int proc_desc, ret_val, kernel_index;
     cpu_registration_entry *cpu_registration_info;
+
+    char proc_path[PROC_PATH_LENGTH];
+
+    ret_val = validate_kmul_access();
+    if (ret_val < 0) {
+        return ret_val;
+    }
+
+    sprintf(proc_path, "/proc/%s", KMUX_PROC_NAME);
+
+    proc_desc = open(proc_path, O_RDONLY);
+    if (proc_desc < 0) {
+        printf("Can't open proc: %s\n", KMUX_PROC_NAME);
+        return proc_desc;
+    }
 
     if (cpu < 0 || cpu >= get_total_cpus()) {
         printf("Invalid CPU: %d\n", cpu);
@@ -249,13 +402,31 @@ int unregister_kernel_cpu(int proc_desc, char *kernel_name, int cpu) {
         printf("Performed kernel cpu unregistering ioctl. Return value: %d\n", ret_val);
     }
 
+    // TODO: Create data structure that gets returned on deregistration
+    // Should contain idle thread PID and all kernel bound threads
     free(cpu_registration_info);
+    close(proc_desc);
+
     return ret_val;
 }
 
-int configure_kernel(int proc_desc, char *kernel_name, char *config_buffer) {
-    int ret_val, kernel_index;
+int configure_kernel(char *kernel_name, char *config_buffer) {
+    int proc_desc, ret_val, kernel_index;
     kernel_config *config_info;
+    char proc_path[PROC_PATH_LENGTH];
+
+    ret_val = validate_kmul_access();
+    if (ret_val < 0) {
+        return ret_val;
+    }
+
+    sprintf(proc_path, "/proc/%s", KMUX_PROC_NAME);
+
+    proc_desc = open(proc_path, O_RDONLY);
+    if (proc_desc < 0) {
+        printf("Can't open proc: %s\n", KMUX_PROC_NAME);
+        return proc_desc;
+    }
 
     if ((ret_val = kernel_index = get_kernel_index(proc_desc, kernel_name)) < 0) {
         printf("Invalid kernel name: %s\n", kernel_name);
@@ -280,6 +451,8 @@ int configure_kernel(int proc_desc, char *kernel_name, char *config_buffer) {
     }
 
     free(config_info);
+    close(proc_desc);
+
     return ret_val;
 }
 

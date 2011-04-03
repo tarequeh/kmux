@@ -85,7 +85,7 @@ ENTRY(save_syscall_environment)
     # Restore TSS
     movl (%esp), %esp
 
-    # Jump to IP in TSS
+    # Jump to IP in TSS containing host kernel or exit address
     jmp  *0x04(%esp)
 
 .globl exit_syscall_environment

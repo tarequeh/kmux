@@ -66,6 +66,23 @@ static int validate_kernel_index(int kernel_index) {
 	return SUCCESS;
 }
 
+static int get_cpu_binding(int kernel_index) {
+    int ret_val, index;
+
+    if((ret_val = validate_kernel_index(kernel_index)) < 0) {
+        return ret_val;
+    }
+
+    for (index = 0; index < MAX_CPU_SUPPORT; index++) {
+        if (cpu_register[index].kernel_index == kernel_index) {
+            // TODO: Devise a way to spread process load across multiple CPUs
+            return index;
+        }
+    }
+
+    return 0;
+}
+
 /* Hash table functions */
 static int find_thread_register_slot(int pgid) {
     int index, hash_tracker;
@@ -479,6 +496,13 @@ static int kmux_ioctl(struct inode *inode, struct file *file, unsigned int cmd, 
             }
 
             return get_kernel_index(kernel_name);
+        }
+        case KMUX_GET_CPU_BINDING:
+        {
+            int kernel_index = (int)arg;
+            printk("Performing kernel CPU binding retrieval ioctl.\n");
+
+            return get_cpu_binding(kernel_index);
         }
         case KMUX_CONFIGURE_KERNEL:
         {

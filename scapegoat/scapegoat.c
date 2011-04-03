@@ -2,16 +2,34 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 
 #define BUFFER_LENGTH 512
 #define EXIT_COMMAND "exit"
 
+/*
+
+
+gettimeofday(&start, NULL);
+usleep(2000);
+gettimeofday(&end, NULL);
+
+seconds  = end.tv_sec  - start.tv_sec;
+useconds = end.tv_usec - start.tv_usec;
+
+mtime = ((seconds) * 1000 + useconds/1000.0) + 0.5;
+
+printf("Elapsed time: %ld milliseconds\n", mtime);
+*/
+
 int main(void) {
     FILE * pfile;
     int items_read;
-
     char input_buffer[BUFFER_LENGTH];
+    struct timeval start, end;
+    long mtime, seconds, useconds;
+
     memset(input_buffer, 0, BUFFER_LENGTH);
 
     pid_t cpid = fork();
@@ -28,13 +46,23 @@ int main(void) {
             }
 
             printf("Opening file\n");
+            gettimeofday(&start, NULL);
             pfile = fopen(input_buffer, "w+");
+            gettimeofday(&end, NULL);
+
             if (!pfile) {
                 printf("Failed to open file\n");
                 continue;
             } else {
                 printf("Successfully opened file: %s\n", input_buffer);
             }
+
+            seconds  = end.tv_sec  - start.tv_sec;
+            useconds = end.tv_usec - start.tv_usec;
+
+            mtime = ((seconds) * 1000000 + useconds) + 0.5;
+
+            printf("Elapsed time: %ld microseconds\n", mtime);
 
             fclose(pfile);
         }
