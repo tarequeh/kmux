@@ -185,15 +185,19 @@ static int unregister_path(int pid) {
 }
 
 int filesys_filter_syscall_handler(struct pt_regs *regs) {
-    int ret_val = -EACCES, syscall_number = regs->ax;
+    int ret_val = SUCCESS, syscall_number = regs->ax;
 
     if(syscall_number == 5 || syscall_number == 8) {
         char *normalized_path, *copied_file_path, *file_path, *matched_path;
         path_entry* path_info;
+        int pid = current->pid, normalized_path_length;
+
+        printk("filesys_filter_syscall_handler: Validating system call: %d executed by PID: %d\n", syscall_number, pid);
 
         file_path = (char *)regs->bx;
         copied_file_path = getname(file_path);
         normalized_path  = (char *) __get_free_page(GFP_ATOMIC);
+        memset(normalized_path, 0, PATH_MAX);
 
         if (!copied_file_path || strlen(copied_file_path) == 0) {
             printk("filesys_filter_syscall_handler: Could not read user file path\n");
@@ -205,14 +209,21 @@ int filesys_filter_syscall_handler(struct pt_regs *regs) {
             ret_val = -ENOMEM;
         }
 
-        if (ret_val >= 0) {
+        printk("filesys_filter_syscall_handler: File path: %s\n", copied_file_path);
+        if (ret_val == SUCCESS) {
             if (copied_file_path[0] != '/') {
                 ret_val = getpwd(normalized_path, PAGE_SIZE);
                 if (ret_val < 0){
                     printk("filesys_filter_syscall_handler: Could not read current directory. getcwd returned: %d\n", ret_val);
                     ret_val = -EFAULT;
                 } else {
-                    printk("filesys_filter_syscall_handler: Current directory: %s, File path: %s\n", normalized_path, copied_file_path);
+                    printk("filesys_filter_syscall_handler: Current directory: %s\n", normalized_path);
+                    normalized_path_length = strlen(normalized_path);
+                    if (normalized_path_length > (PATH_MAX - strlen(copied_file_path) - 2)) {
+                        printk("filesys_filter_syscall_handler: Normalized path exceeds maximum path size\n");
+                        ret_val = -EINVAL;
+                    }
+                    normalized_path[normalized_path_length] = '/';
                     strcat(normalized_path, copied_file_path);
                 }
             } else {
@@ -220,14 +231,21 @@ int filesys_filter_syscall_handler(struct pt_regs *regs) {
             }
         }
 
-        if (ret_val >= 0) {
-            path_info = lookup_path_entry(current->pid);
+        if (ret_val == SUCCESS) {
+            path_info = lookup_path_entry(pid);
             if (path_info) {
                 matched_path = strstr(normalized_path, path_info->path);
                 // NOTE: If normalized path doesn't start with restricted path, return error
                 if (matched_path == normalized_path) {
+                    printk("filesys_filter_syscall_handler: Found allowed path: %s\n", normalized_path);
                     ret_val = gnext_kernel_index;
+                } else {
+                    printk("filesys_filter_syscall_handler: Couldn't match requested path %s with allowed path: %s\n", normalized_path, path_info->path);
+                    ret_val = -EACCES;
                 }
+            } else {
+                printk("filesys_filter_syscall_handler: Could not retrieve record for: %d\n", pid);
+                ret_val = -EACCES;
             }
         }
 
