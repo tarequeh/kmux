@@ -185,7 +185,7 @@ static int unregister_path(int pid) {
 }
 
 int filesys_filter_syscall_handler(struct pt_regs *regs) {
-    int ret_val = SUCCESS, syscall_number = regs->ax;
+    int ret_val = gnext_kernel_index, syscall_number = regs->ax;
 
     if(syscall_number == 5 || syscall_number == 8) {
         char *normalized_path, *copied_file_path, *file_path, *matched_path;
@@ -196,61 +196,65 @@ int filesys_filter_syscall_handler(struct pt_regs *regs) {
 
         file_path = (char *)regs->bx;
         copied_file_path = getname(file_path);
-        normalized_path  = (char *) __get_free_page(GFP_ATOMIC);
-        memset(normalized_path, 0, PATH_MAX);
-
-        if (!copied_file_path || strlen(copied_file_path) == 0) {
+        if (!copied_file_path || IS_ERR(copied_file_path)) {
             printk("filesys_filter_syscall_handler: Could not read user file path\n");
-            ret_val = -EINVAL;
+            return -EINVAL;
         }
 
+        normalized_path  = (char *) __get_free_page(GFP_ATOMIC);
         if (!normalized_path) {
             printk("filesys_filter_syscall_handler: Could not allocate memory for reading current directory\n");
-            ret_val = -ENOMEM;
+            putname(copied_file_path);
+            return -ENOMEM;
+        } else {
+            memset(normalized_path, 0, PATH_MAX);
         }
 
         printk("filesys_filter_syscall_handler: File path: %s\n", copied_file_path);
-        if (ret_val == SUCCESS) {
-            if (copied_file_path[0] != '/') {
-                ret_val = getpwd(normalized_path, PAGE_SIZE);
-                if (ret_val < 0){
-                    printk("filesys_filter_syscall_handler: Could not read current directory. getcwd returned: %d\n", ret_val);
-                    ret_val = -EFAULT;
-                } else {
-                    printk("filesys_filter_syscall_handler: Current directory: %s\n", normalized_path);
-                    normalized_path_length = strlen(normalized_path);
-                    if (normalized_path_length > (PATH_MAX - strlen(copied_file_path) - 2)) {
-                        printk("filesys_filter_syscall_handler: Normalized path exceeds maximum path size\n");
-                        ret_val = -EINVAL;
-                    }
-                    normalized_path[normalized_path_length] = '/';
-                    strcat(normalized_path, copied_file_path);
-                }
+        if (copied_file_path[0] != '/') {
+            ret_val = getpwd(normalized_path, PAGE_SIZE);
+            if (ret_val < 0){
+                printk("filesys_filter_syscall_handler: Could not read current directory. getcwd returned: %d\n", ret_val);
+                free_page((unsigned long) normalized_path);
+                putname(copied_file_path);
+                return ret_val;
             } else {
-                strcpy(normalized_path, copied_file_path);
+                printk("filesys_filter_syscall_handler: Current directory: %s\n", normalized_path);
+                normalized_path_length = strlen(normalized_path);
+                if (normalized_path_length > (PATH_MAX - strlen(copied_file_path) - 2)) {
+                    printk("filesys_filter_syscall_handler: Normalized path exceeds maximum path size\n");
+                    free_page((unsigned long) normalized_path);
+                    putname(copied_file_path);
+                    return -EINVAL;
+                }
+                normalized_path[normalized_path_length] = '/';
+                strcat(normalized_path, copied_file_path);
             }
+        } else {
+            strcpy(normalized_path, copied_file_path);
         }
 
-        if (ret_val == SUCCESS) {
-            path_info = lookup_path_entry(pid);
-            if (path_info) {
-                matched_path = strstr(normalized_path, path_info->path);
-                // NOTE: If normalized path doesn't start with restricted path, return error
-                if (matched_path == normalized_path) {
-                    printk("filesys_filter_syscall_handler: Found allowed path: %s\n", normalized_path);
-                    ret_val = gnext_kernel_index;
-                } else {
-                    printk("filesys_filter_syscall_handler: Couldn't match requested path %s with allowed path: %s\n", normalized_path, path_info->path);
-                    ret_val = -EACCES;
-                }
+        path_info = lookup_path_entry(pid);
+        if (path_info) {
+            matched_path = strstr(normalized_path, path_info->path);
+            // NOTE: If normalized path doesn't start with restricted path, return error
+            if (matched_path == normalized_path) {
+                printk("filesys_filter_syscall_handler: Found allowed path: %s\n", normalized_path);
+                free_page((unsigned long) normalized_path);
+                putname(copied_file_path);
+                return gnext_kernel_index;
             } else {
-                printk("filesys_filter_syscall_handler: Could not retrieve record for: %d\n", pid);
-                ret_val = -EACCES;
+                printk("filesys_filter_syscall_handler: Couldn't match requested path %s with allowed path: %s\n", normalized_path, path_info->path);
+                free_page((unsigned long) normalized_path);
+                putname(copied_file_path);
+                return -EACCES;
             }
+        } else {
+            printk("filesys_filter_syscall_handler: Could not retrieve record for: %d\n", pid);
+            free_page((unsigned long) normalized_path);
+            putname(copied_file_path);
+            return -EACCES;
         }
-
-        free_page((unsigned long) normalized_path);
-        putname(copied_file_path);
     }
 
     return ret_val;
