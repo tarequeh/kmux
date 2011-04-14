@@ -94,6 +94,9 @@ static int register_process(int pid, char *kernel_name, char *syscall_list) {
 
     process_info->pid = pid;
     process_info->next_kernel_index = KMUX_HOST_KERNEL_INDEX;
+    for (index = 0; index < MAX_SYSCALL + 1; index++) {
+        process_info->allowed_syscalls[index] = 0;
+    }
 
     if (syscall_list) {
         int syscall_number;
@@ -188,8 +191,7 @@ int sandbox_syscall_handler(struct pt_regs *regs) {
     }
 
     if (register_index) {
-        if (process_register[register_index].allowed_syscalls[syscall_number]) {
-            printk("Allowing system call: %d from PID (%d), PGID (%d)\n", syscall_number, current->pid, pgid);
+        if (process_register[register_index].allowed_syscalls[syscall_number] == 1) {
             return process_register[register_index].next_kernel_index;
         }
     }

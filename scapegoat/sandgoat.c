@@ -31,13 +31,18 @@ int main(void) {
 
     if (cpid == 0) {
         /*
+        5 sandbox (allowed_syscalls =
+        4, 5, 6, 45, 78, 91, 192, 197, 252)
         Syscall used by sandgoat child:
         -------------------------------
         4   -> write
+        5   -> open
         6   -> close (shouldn't happen if open is blocked)
-        8   -> creat (create a file)
         45  -> brk (change segment size)
         78  -> gettimeofday
+        91  -> munmap
+        192 -> mmap2
+        197 -> fstat64
         252 -> exit_group (needs to exit the group since parent is waiting on it)
 
         Sandbox test scenario:
@@ -78,8 +83,8 @@ int main(void) {
 
         printf("Elapsed cycles: %lld\n", end-start);
     } else {
-        //printf("Sandgoat PID: %d\n", cpid);
-        //printf("Now waiting for child to finish\n");
+        printf("Sandgoat PID: %d\n", cpid);
+        printf("Now waiting for child to finish\n");
         wait(NULL);
     }
 
