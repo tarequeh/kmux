@@ -8,12 +8,22 @@
 #define BUFFER_LENGTH 512
 #define EXIT_COMMAND "exit"
 
+#define BENCHMARK_FILE_NAME "test.log"
+
+#define BENCHMARK_LOOP_SIZE 1
+
+#define rdtscll(val) __asm__ __volatile__("rdtsc" : "=A" (val))
+
 int main(void) {
     FILE * pfile;
-    int items_read;
+    int loop_count;
     char input_buffer[BUFFER_LENGTH];
-    struct timeval start, end;
-    long mtime, seconds, useconds;
+    struct timeval test;
+
+    char test_message[] = "This is a test.\n";
+    size_t test_message_length = sizeof(test_message);
+
+    unsigned long long start, end;
 
     memset(input_buffer, 0, BUFFER_LENGTH);
 
@@ -35,7 +45,7 @@ int main(void) {
         Block syscall 8 and allow others
 
         */
-        printf("Type file name/path or exit:\n");
+        printf("Press enter to continue with test:\n");
         fgets(input_buffer, BUFFER_LENGTH, stdin);
 
         input_buffer[strlen(input_buffer) - 1] = '\0';
@@ -44,25 +54,31 @@ int main(void) {
             return 0;
         }
 
-        printf("Opening file\n");
-        gettimeofday(&start, NULL);
-        pfile = fopen(input_buffer, "w+");
-        gettimeofday(&end, NULL);
+        memset(input_buffer, 0, BUFFER_LENGTH);
+        sprintf(input_buffer, "rm -rf %s", BENCHMARK_FILE_NAME);
+        system(input_buffer);
+        fflush(stdout);
 
-        if (!pfile) {
-            printf("Failed to open file\n");
-        } else {
-            printf("Successfully opened file: %s\n", input_buffer);
+        rdtscll(start);
+
+        while(loop_count < BENCHMARK_LOOP_SIZE) {
+            pfile = fopen(BENCHMARK_FILE_NAME, "w+");
+
+            gettimeofday(&test, NULL);
+
+            if (!pfile) {
+                printf("Failed to open file\n");
+            } else {
+                fwrite (test_message, 1 , test_message_length, pfile);
+                fclose(pfile);
+            }
+
+            loop_count++;
         }
 
-        seconds  = end.tv_sec  - start.tv_sec;
-        useconds = end.tv_usec - start.tv_usec;
+        rdtscll(end);
 
-        mtime = ((seconds) * 1000000 + useconds) + 0.5;
-
-        printf("Elapsed time: %ld microseconds\n", mtime);
-
-        if (pfile) fclose(pfile);
+        printf("Elapsed cycles: %lld\n", end-start);
     } else {
         printf("Sandgoat PID: %d\n", cpid);
         printf("Now waiting for child to finish\n");
