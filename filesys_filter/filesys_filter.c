@@ -1,5 +1,6 @@
-#include <asm/uaccess.h>
 #include <asm/fcntl.h>
+#include <asm/uaccess.h>
+#include <asm/unistd.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -187,7 +188,8 @@ static int unregister_path(int pid) {
 int filesys_filter_syscall_handler(struct pt_regs *regs) {
     int ret_val = gnext_kernel_index, syscall_number = regs->ax;
 
-    if(syscall_number == 5 || syscall_number == 8) {
+    // NOTE: For proof of concept, only filter open and creat
+    if(syscall_number == __NR_open || syscall_number == __NR_creat) {
         char *normalized_path, *copied_file_path, *file_path, *matched_path;
         path_entry* path_info;
         int pid = current->pid, normalized_path_length;
