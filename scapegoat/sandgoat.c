@@ -16,7 +16,7 @@
 
 int main(void) {
     FILE * pfile;
-    int loop_count;
+    int ret_val, loop_count;
     char input_buffer[BUFFER_LENGTH];
     struct timeval test;
 
@@ -33,7 +33,7 @@ int main(void) {
         /*
         Syscall used by sandgoat child:
         -------------------------------
-        4   -> write (writes to stdout)
+        4   -> write
         6   -> close (shouldn't happen if open is blocked)
         8   -> creat (create a file)
         45  -> brk (change segment size)
@@ -54,9 +54,7 @@ int main(void) {
             return 0;
         }
 
-        memset(input_buffer, 0, BUFFER_LENGTH);
-        sprintf(input_buffer, "rm -rf %s", BENCHMARK_FILE_NAME);
-        system(input_buffer);
+        loop_count = 0;
         fflush(stdout);
 
         rdtscll(start);
@@ -64,7 +62,7 @@ int main(void) {
         while(loop_count < BENCHMARK_LOOP_SIZE) {
             pfile = fopen(BENCHMARK_FILE_NAME, "w+");
 
-            gettimeofday(&test, NULL);
+            ret_val = gettimeofday(&test, NULL);
 
             if (!pfile) {
                 printf("Failed to open file\n");
@@ -80,8 +78,8 @@ int main(void) {
 
         printf("Elapsed cycles: %lld\n", end-start);
     } else {
-        printf("Sandgoat PID: %d\n", cpid);
-        printf("Now waiting for child to finish\n");
+        //printf("Sandgoat PID: %d\n", cpid);
+        //printf("Now waiting for child to finish\n");
         wait(NULL);
     }
 
