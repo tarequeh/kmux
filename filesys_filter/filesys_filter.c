@@ -190,7 +190,7 @@ int filesys_filter_syscall_handler(struct pt_regs *regs) {
 
     // NOTE: For proof of concept, only filter open and creat
     if(syscall_number == __NR_open || syscall_number == __NR_creat) {
-        char *normalized_path, *copied_file_path, *file_path, *matched_path;
+        char *normalized_path, *copied_file_path, *file_path;
         path_entry* path_info;
         int pid = current->pid, normalized_path_length;
 
@@ -230,9 +230,8 @@ int filesys_filter_syscall_handler(struct pt_regs *regs) {
 
         path_info = lookup_path_entry(pid);
         if (path_info) {
-            matched_path = strstr(normalized_path, path_info->path);
-            // NOTE: If normalized path doesn't start with restricted path, return error
-            if (matched_path == normalized_path) {
+            // Check if normalized_path starts with path_info->path
+            if (strbeg(normalized_path, path_info->path)) {
                 free_page((unsigned long) normalized_path);
                 putname(copied_file_path);
                 return gnext_kernel_index;
