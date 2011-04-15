@@ -13,7 +13,7 @@
 #define MIN_SYSCALL 0
 #define MAX_SYSCALL 337
 
-extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler);
+extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler, int is_direct);
 extern int unregister_kernel(char* kernel_name);
 extern int get_kernel_index(char *kernel_name);
 
@@ -135,7 +135,7 @@ static int __init syscallmux_init(void) {
         syscall_kernel_register[index] = KMUX_HOST_KERNEL_INDEX;
     }
 
-    register_kernel(MODULE_NAME, &syscallmux_syscall_handler, &syscallmux_config_handler);
+    register_kernel(MODULE_NAME, &syscallmux_syscall_handler, &syscallmux_config_handler, 0);
     return 0;
 }
 

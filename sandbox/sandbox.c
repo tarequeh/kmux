@@ -17,7 +17,7 @@
 #define DIRECTIVE_NEXT_KERNEL "next_kernel"
 #define DIRECTIVE_ALLOWED_SYSCALLS "allowed_syscalls"
 
-extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler);
+extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler, int is_direct);
 extern int unregister_kernel(char* kernel_name);
 extern int get_kernel_index(char* kernel_name);
 
@@ -160,7 +160,7 @@ static int __init sandbox_init(void) {
         allowed_syscalls[index] = 0;
     }
 
-    register_kernel(MODULE_NAME, &sandbox_syscall_handler, &sandbox_config_handler);
+    register_kernel(MODULE_NAME, &sandbox_syscall_handler, &sandbox_config_handler, 0);
 	return 0;
 }
 
