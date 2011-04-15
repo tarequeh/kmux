@@ -8,21 +8,6 @@
 #define BUFFER_LENGTH 512
 #define EXIT_COMMAND "exit"
 
-/*
-
-
-gettimeofday(&start, NULL);
-usleep(2000);
-gettimeofday(&end, NULL);
-
-seconds  = end.tv_sec  - start.tv_sec;
-useconds = end.tv_usec - start.tv_usec;
-
-mtime = ((seconds) * 1000 + useconds/1000.0) + 0.5;
-
-printf("Elapsed time: %ld milliseconds\n", mtime);
-*/
-
 int main(void) {
     FILE * pfile;
     int items_read;
@@ -52,7 +37,6 @@ int main(void) {
 
             if (!pfile) {
                 printf("Failed to open file\n");
-                continue;
             } else {
                 printf("Successfully opened file: %s\n", input_buffer);
             }
@@ -64,7 +48,7 @@ int main(void) {
 
             printf("Elapsed time: %ld microseconds\n", mtime);
 
-            fclose(pfile);
+            if (pfile) fclose(pfile);
         }
         printf("Exiting child\n");
     } else {

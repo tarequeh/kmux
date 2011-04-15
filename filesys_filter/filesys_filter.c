@@ -192,7 +192,8 @@ int filesys_filter_syscall_handler(struct pt_regs *regs) {
     if(syscall_number == __NR_open || syscall_number == __NR_creat) {
         char *normalized_path, *copied_file_path, *file_path;
         path_entry* path_info;
-        int pid = current->pid, normalized_path_length;
+        struct pid *pid;
+        int pgid, normalized_path_length;
 
         file_path = (char *)regs->bx;
         copied_file_path = getname(file_path);
@@ -228,7 +229,21 @@ int filesys_filter_syscall_handler(struct pt_regs *regs) {
             strcpy(normalized_path, copied_file_path);
         }
 
-        path_info = lookup_path_entry(pid);
+        pid = task_pgrp(current);
+        pgid = pid->numbers[0].nr;
+
+        // Look for pid record, if not found, look for tgid (if tgid not the same as pid record), then look for pgid record
+        path_info = lookup_path_entry(current->pid);
+        if (!path_info) {
+            if (current->pid != current->tgid) {
+                path_info = lookup_path_entry(current->tgid);
+            }
+
+            if (!path_info) {
+                path_info = lookup_path_entry(pgid);
+            }
+        }
+
         if (path_info) {
             // Check if normalized_path starts with path_info->path
             if (strbeg(normalized_path, path_info->path)) {
