@@ -45,6 +45,24 @@ static int atoi(const char *s) {
     return k;
 }
 
+// int strbeg(char *str1, char *str2) checks if str1 starts with str2
+// O(shorter input), better than strstr
+int strbeg(const char *str, const char *substr) {
+    int count = 0;
+
+    if (!str || !substr) return 0;
+
+    while(*str != '\0' && *substr != '\0') {
+        if (*str != *substr) break;
+        str++; substr++; count++;
+    }
+
+    if (!count) return (*str == *substr);
+    if (*substr == '\0') return 1;
+
+    return 0;
+}
+
 // Jenkins 32 bit integer has
 static unsigned int j32int_hash(int key) {
     unsigned int hashed_key = (unsigned int)key;
