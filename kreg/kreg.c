@@ -18,9 +18,9 @@ void initialize_kreg(void) {
 	switch_cpu_for_current_processes();
 }
 
-// TODO: Check for unregistered kernels every time a command comes in and get rid of idle loops
 int main(void) {
-    initialize_kreg();
+    // Uncomment following line when experimenting with CPU binding
+    //initialize_kreg();
 
     char input_buffer[BUFFER_LENGTH], scan_regex[SCAN_REGEX_LENGTH], kernel_name[MAX_KERNEL_NAME_LENGTH], config_buffer[MAX_KERNEL_CONFIG_BUFFER_LENGTH];
     int kmux_command, ret_val, pgid, cpu, var_param, items_scanned;
