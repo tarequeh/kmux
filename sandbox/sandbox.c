@@ -1,6 +1,7 @@
 #include <asm/uaccess.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/sched.h>
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/smp.h>
@@ -13,6 +14,8 @@
 #define MIN_SYSCALL 337
 #define MAX_SYSCALL 337
 
+#define MAX_PROCESS_SUPPORT 512
+
 #define DIRECTIVE_MAX_LENGTH 64
 #define DIRECTIVE_NEXT_KERNEL "next_kernel"
 #define DIRECTIVE_ALLOWED_SYSCALLS "allowed_syscalls"
@@ -21,38 +24,193 @@ extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscal
 extern int unregister_kernel(char* kernel_name);
 extern int get_kernel_index(char* kernel_name);
 
-int allowed_syscalls[MAX_SYSCALL + 1];
-int gnext_kernel_index = KMUX_HOST_KERNEL_INDEX;
+struct process_entry {
+    int pid;
+    int next_kernel_index;
+    int allowed_syscalls[MAX_SYSCALL + 1];
+};
 
-int sandbox_syscall_handler(struct pt_regs *regs) {
-    int syscall_number = (int)regs->ax;
+typedef struct process_entry process_entry;
 
-    if (syscall_number < 0 || syscall_number > MAX_SYSCALL) {
-        printk("sandbox_syscall_handler: Encountered invalid syscall number: %lu\n", regs->ax);
+process_entry process_register[MAX_PROCESS_SUPPORT];
+
+/* Hash table functions */
+static int find_process_register_slot(int pid) {
+    int index, hash_tracker;
+
+    index = (int)(j32int_hash(pid) % MAX_PROCESS_SUPPORT);
+
+    // Under no circumstance hash_tracker will exceed MAX_PROCESS_SUPPORT
+    hash_tracker = 0;
+    while(hash_tracker < MAX_PROCESS_SUPPORT) {
+        // Return index on empty or match
+        if (process_register[index].pid == -1 || process_register[index].pid == pid) {
+            return index;
+        }
+        index = (index + 1) % MAX_PROCESS_SUPPORT;
+        hash_tracker++;
     }
 
-    if (allowed_syscalls[syscall_number]) {
-        return gnext_kernel_index;
+    return -ENOSPC;
+}
+
+static process_entry *lookup_process_entry(int pid) {
+    int index;
+    index = find_process_register_slot(pid);
+
+    if (index < 0) {
+        return NULL;
+    }
+
+    if (process_register[index].pid == -1) {
+        // pid is not in register
+        return NULL;
     } else {
-        return -EPERM;
+        // pid is in register
+        return &process_register[index];
     }
 }
 
-static int set_syscall_allowed(int syscall) {
-    if (syscall > MAX_SYSCALL) {
+static int register_process(int pid, char *kernel_name, char *syscall_list) {
+    int index, process_index, kernel_index, next_kernel_received = 0, syscall_received = 0;
+    process_entry *process_info;
+
+    if (!kernel_name && !syscall_list) {
+        printk("register_process: Didn't receive any useful information to create a process record\n");
         return -EINVAL;
     }
 
-    allowed_syscalls[syscall] = 1;
+    process_index = find_process_register_slot(pid);
+    if (process_index < 0) {
+        printk("register_process: No more space left on process register\n");
+        return process_index;
+    }
+
+    process_info = kmalloc(sizeof(process_entry), GFP_KERNEL);
+    if (!process_info) {
+        printk("register_process: Could not allocate memory for temporary process entry\n");
+        return -ENOMEM;
+    }
+
+    process_info->pid = pid;
+    process_info->next_kernel_index = KMUX_HOST_KERNEL_INDEX;
+
+    if (syscall_list) {
+        int syscall_number;
+        char *syscall_tokens, *trimmed_syscall_token, *syscall_tokens_tracker;
+        syscall_tokens = strtok_r(syscall_list, ",", &syscall_tokens_tracker);
+        while(syscall_tokens != NULL) {
+            trimmed_syscall_token = trim(syscall_tokens, ' ');
+            if (strlen(trimmed_syscall_token) > 0) {
+                syscall_number = atoi(trimmed_syscall_token);
+
+                if (syscall_number >= MIN_SYSCALL || syscall_number <= MAX_SYSCALL) {
+                    process_info->allowed_syscalls[syscall_number] = 1;
+                    syscall_received = 1;
+                    printk("register_process: Added syscall: %d to allowed list for PID: %d\n", syscall_number, pid);
+                } else {
+                    printk("register_process: Invalid syscall number: %d specified for PID: %d. Skipping\n", syscall_number, pid);
+                }
+            } else {
+                printk("register_process: Found empty syscall number for PID: %d. Skipping\n", pid);
+            }
+            syscall_tokens = strtok_r(NULL, ",", &syscall_tokens_tracker);
+        }
+    }
+
+    if (kernel_name) {
+        kernel_index = get_kernel_index(kernel_name);
+        if (kernel_index < 0) {
+            printk("register_process: Invalid next kernel name: %s for PID: %d\n", kernel_name, pid);
+        } else {
+            printk("register_process: Set next kernel: %s for PID: %d\n", kernel_name, pid);
+            process_info->next_kernel_index = kernel_index;
+            next_kernel_received = 1;
+        }
+    }
+
+    if (next_kernel_received || syscall_received) {
+        process_register[process_index].pid = pid;
+        if (next_kernel_received) {
+            process_register[process_index].next_kernel_index = process_info->next_kernel_index;
+        }
+
+        if (syscall_received) {
+            for (index = 0; index < MAX_SYSCALL + 1; index++) {
+                if (process_info->allowed_syscalls[index]) {
+                    process_register[process_index].allowed_syscalls[index] = 1;
+                }
+            }
+        }
+
+        kfree(process_info);
+        return SUCCESS;
+    } else {
+        kfree(process_info);
+        return -EINVAL;
+    }
+}
+
+static int unregister_process(int pid) {
+    int index;
+    process_entry *process_info;
+
+    process_info = lookup_process_entry(pid);
+    if (!process_info) {
+        return -EINVAL;
+    }
+
+    process_info->pid = -1;
+    process_info->next_kernel_index = KMUX_HOST_KERNEL_INDEX;
+    for (index = 0; index < MAX_SYSCALL + 1; index++) {
+        process_info->allowed_syscalls[index] = 0;
+    }
+
     return SUCCESS;
 }
 
+int sandbox_syscall_handler(struct pt_regs *regs) {
+    process_entry *process_info;
+    struct pid *pid;
+    int pgid, syscall_number = (int)regs->ax;
+
+    if (syscall_number < 0 || syscall_number > MAX_SYSCALL) {
+        // NOTE: Highly unlikely
+        return -EINVAL;
+    }
+
+    pid = task_pgrp(current);
+    pgid = pid->numbers[0].nr;
+
+    // Look for pid record, if not found, look for tgid (if tgid not the same as pid record), then look for pgid record
+    process_info = lookup_process_entry(current->pid);
+    if (!process_info) {
+        if (current->pid != current->tgid) {
+            process_info = lookup_process_entry(current->tgid);
+        }
+
+        if (!process_info) {
+            process_info = lookup_process_entry(pgid);
+        }
+    }
+
+    if (process_info) {
+        if (process_info->allowed_syscalls[syscall_number]) {
+            return process_info->next_kernel_index;
+        }
+    }
+
+    return -EPERM;
+}
+
 // Config buffer contains either of the following structures:
-// (next_kernel = linux), (allowed_syscalls = 45, 67, 23, 178)
+// (next_kernel = 2090 - linux), (allowed_syscalls = 2090 - 45, 67, 23, 178)
 int sandbox_config_handler(char *config_buffer) {
-    int syscall_number, kernel_index;
+    int pid;
     char directive[DIRECTIVE_MAX_LENGTH], kernel_name[MAX_KERNEL_NAME_LENGTH], safe_config_buffer[MAX_KERNEL_CONFIG_BUFFER_LENGTH];
-    char *kernel_configs, *kernel_configs_tracker, *config_tokens, *config_tokens_tracker, *syscall_numbers, *syscall_numbers_tracker, *trimmed_config, *trimmed_config_token, *trimmed_syscall;
+    char *kernel_configs, *kernel_configs_tracker, *trimmed_kernel_config;
+    char *config_tokens, *config_tokens_tracker, *trimmed_config_token;
+    char *parameter_tokens, *parameter_tokens_tracker, *trimmed_parameter_token;
 
     memset(directive, 0, DIRECTIVE_MAX_LENGTH);
     memset(kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
@@ -78,13 +236,13 @@ int sandbox_config_handler(char *config_buffer) {
     kernel_configs = strtok_r(safe_config_buffer, "()", &kernel_configs_tracker);
 
     while (kernel_configs != NULL) {
-        trimmed_config = trim(kernel_configs, ' ');
-        trimmed_config = ltrim(trimmed_config, ',');
-        trimmed_config = trim(trimmed_config, ' ');
+        trimmed_kernel_config = trim(kernel_configs, ' ');
+        trimmed_kernel_config = ltrim(trimmed_kernel_config, ',');
+        trimmed_kernel_config = trim(trimmed_kernel_config, ' ');
 
-        if (strlen(trimmed_config) > 0) {
-            printk("sandbox_config_handler: Config piece: %s\n", trimmed_config);
-            config_tokens = strtok_r(trimmed_config, "=", &config_tokens_tracker);
+        if (strlen(trimmed_kernel_config) > 0) {
+            printk("sandbox_config_handler: Config piece: %s\n", trimmed_kernel_config);
+            config_tokens = strtok_r(trimmed_kernel_config, "=", &config_tokens_tracker);
 
             if (config_tokens != NULL) {
                 trimmed_config_token = trim(config_tokens, ' ');
@@ -94,46 +252,51 @@ int sandbox_config_handler(char *config_buffer) {
                     strcpy(directive, trimmed_config_token);
 
                     printk("sandbox_config_handler: Directive: %s\n", directive);
-                    config_tokens = strtok_r(NULL, "=", &config_tokens_tracker);
+                    if ((strcmp(directive, DIRECTIVE_NEXT_KERNEL) == 0) || (strcmp(directive, DIRECTIVE_ALLOWED_SYSCALLS) == 0)) {
+                        config_tokens = strtok_r(NULL, "=", &config_tokens_tracker);
 
-                    if (config_tokens != NULL) {
-                        trimmed_config_token = trim(config_tokens, ' ');
-                        if (strlen(trimmed_config_token) > 0) {
-                            printk("sandbox_config_handler: Directive parameters: %s\n", trimmed_config_token);
-                            if (strcmp(directive, DIRECTIVE_NEXT_KERNEL) == 0) {
-                                kernel_index = get_kernel_index(trimmed_config_token);
-                                if (kernel_index < 0) {
-                                    printk("sandbox_config_handler: Invalid next kernel name: %s\n", trimmed_config_token);
-                                } else {
-                                    printk("sandbox_config_handler: Set next kernel to: %s\n", trimmed_config_token);
-                                    gnext_kernel_index = kernel_index;
-                                }
-                            } else if (strcmp(directive, DIRECTIVE_ALLOWED_SYSCALLS) == 0) {
-                                syscall_numbers = strtok_r(trimmed_config_token, ",", &syscall_numbers_tracker);
-                                while(syscall_numbers != NULL) {
-                                    trimmed_syscall = trim(syscall_numbers, ' ');
-                                    if (strlen(trimmed_syscall) > 0) {
-                                        syscall_number = atoi(trimmed_syscall);
-
-                                        if (syscall_number >= MIN_SYSCALL || syscall_number <= MAX_SYSCALL) {
-                                            allowed_syscalls[syscall_number] = 1;
-                                            printk("sandbox_config_handler: Added syscall: %d to allowed list\n", syscall_number);
+                        if (config_tokens != NULL) {
+                            trimmed_config_token = trim(config_tokens, ' ');
+                            if (strlen(trimmed_config_token) > 0) {
+                                printk("sandbox_config_handler: Directive parameters: %s\n", trimmed_config_token);
+                                parameter_tokens = strtok_r(trimmed_config_token, "-", &parameter_tokens_tracker);
+                                if (parameter_tokens) {
+                                    trimmed_parameter_token = trim(parameter_tokens, ' ');
+                                    if (strlen(trimmed_parameter_token)) {
+                                        pid = atoi(trimmed_parameter_token);
+                                        if (pid > 0) {
+                                            parameter_tokens = strtok_r(NULL, "-", &parameter_tokens_tracker);
+                                            if (parameter_tokens) {
+                                                trimmed_parameter_token = trim(parameter_tokens, ' ');
+                                                if (strlen(trimmed_parameter_token)) {
+                                                    if (strcmp(directive, DIRECTIVE_NEXT_KERNEL) == 0) {
+                                                        register_process(pid, trimmed_parameter_token, NULL);
+                                                    } else if (strcmp(directive, DIRECTIVE_ALLOWED_SYSCALLS) == 0) {
+                                                        register_process(pid, NULL, trimmed_parameter_token);
+                                                    }
+                                                } else {
+                                                    printk("sandbox_config_handler: Found empty configuration data for PID: %d in directive parameters. Skipping\n", pid);
+                                                }
+                                            } else {
+                                                printk("sandbox_config_handler: Could not read configuration data for PID: %d from directive parameters. Skipping\n", pid);
+                                            }
                                         } else {
-                                            printk("sandbox_config_handler: Invalid syscall number: %d specified for kernel: %s. Skipping\n", syscall_number, kernel_name);
+                                            printk("sandbox_config_handler: Found invalid PID: %d in directive parameters. Skipping\n", pid);
                                         }
                                     } else {
-                                        printk("sandbox_config_handler: Found empty syscall number. Skipping\n");
+                                        printk("sandbox_config_handler: Found empty PID in directive parameters. Skipping\n");
                                     }
-                                    syscall_numbers = strtok_r(NULL, ",", &syscall_numbers_tracker);
+                                } else {
+                                    printk("sandbox_config_handler: Could not read PID from directive parameters. Skipping\n");
                                 }
                             } else {
-                                printk("sandbox_config_handler: Invalid directive in configuration piece. Skipping\n");
+                                printk("sandbox_config_handler: Found empty directive parameters. Skipping\n");
                             }
                         } else {
-                            printk("sandbox_config_handler: Found empty directive parameters. Skipping\n");
+                            printk("sandbox_config_handler: Could not read directive parameters from configuration piece. Skipping\n");
                         }
                     } else {
-                        printk("sandbox_config_handler: Could not read directive parameters from configuration piece. Skipping\n");
+                        printk("sandbox_config_handler: Invalid directive in configuration piece. Skipping\n");
                     }
                 } else {
                     printk("sandbox_config_handler: Found empty directive. Skipping\n");
@@ -153,11 +316,15 @@ int sandbox_config_handler(char *config_buffer) {
 
 /* Module initialization/ termination */
 static int __init sandbox_init(void) {
-    int index;
+    int index, subindex;
     printk("Installing module: %s\n", MODULE_NAME);
 
-    for (index = 0; index < MAX_SYSCALL + 1; index++) {
-        allowed_syscalls[index] = 0;
+    for (index = 0; index < MAX_PROCESS_SUPPORT; index++) {
+        process_register[index].pid = -1;
+        process_register[index].next_kernel_index = KMUX_HOST_KERNEL_INDEX;
+        for (subindex = 0; subindex < MAX_SYSCALL + 1; subindex++) {
+            process_register[index].allowed_syscalls[subindex] = 0;
+        }
     }
 
     register_kernel(MODULE_NAME, &sandbox_syscall_handler, &sandbox_config_handler);
