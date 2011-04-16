@@ -51,6 +51,7 @@ struct kernel_entry {
 	char kernel_name[MAX_KERNEL_NAME_LENGTH];
 	kmux_kernel_syscall_handler kernel_syscall_handler;
 	kmux_kernel_config_handler kernel_config_handler;
+	int is_direct;
 };
 
 typedef struct kernel_entry kernel_entry;

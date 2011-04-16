@@ -8,7 +8,7 @@
 
 #define MODULE_NAME "syscall_printer"
 
-extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler);
+extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler, int is_direct);
 extern int unregister_kernel(char* kernel_name);
 extern int get_kernel_index(char *kernel_name);
 
@@ -20,7 +20,7 @@ int sysprinter_syscall_handler(struct pt_regs *regs) {
 /* Module initialization/ termination */
 static int __init sysprinter_init(void) {
 	printk("Installing module: %s\n", MODULE_NAME);
-	register_kernel(MODULE_NAME, &sysprinter_syscall_handler, NULL);
+	register_kernel(MODULE_NAME, &sysprinter_syscall_handler, NULL, 0);
 	return 0;
 }
 

@@ -57,11 +57,19 @@ static int validate_kernel_index(int kernel_index) {
 		return -EINVAL;
 	}
 
-	if (kernel_register[kernel_index].kernel_name[0] == 0 || kernel_register[kernel_index].kernel_syscall_handler == NULL) {
+	if (kernel_register[kernel_index].kernel_name[0] == 0 || kernel_register[kernel_index].kernel_syscall_handler == NULL || kernel_register[kernel_index].is_direct < 0 || kernel_register[kernel_index].is_direct > 1) {
 		return -EINVAL;
 	}
 
 	return SUCCESS;
+}
+
+kmux_kernel_syscall_handler get_kernel_syscall_handler(int kernel_index) {
+    if(validate_kernel_index(kernel_index) < 0) {
+        return NULL;
+    }
+
+    return kernel_register[kernel_index].kernel_syscall_handler;
 }
 
 static int get_cpu_binding(int kernel_index) {
@@ -115,11 +123,11 @@ static int lookup_kernel_index(int pgid) {
 
 /* kmux API functions */
 
-int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler){
+int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler, int is_direct){
 	int index;
 
 	// Argument check
-	if (kernel_name[0] == 0 || strlen(kernel_name) > MAX_KERNEL_NAME_LENGTH || syscall_handler == NULL) {
+	if (kernel_name[0] == 0 || strlen(kernel_name) > MAX_KERNEL_NAME_LENGTH || syscall_handler == NULL || is_direct < 0 || is_direct > 1) {
 		return -EINVAL;
 	}
 
@@ -134,6 +142,7 @@ int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handl
 			printk("register_kernel: Found existing spot at %d\n", index);
 			kernel_register[index].kernel_syscall_handler = syscall_handler;
 			kernel_register[index].kernel_config_handler = config_handler;
+			kernel_register[index].is_direct = is_direct;
 			return SUCCESS;
 		}
 	}
@@ -145,6 +154,7 @@ int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handl
 			strcpy(kernel_register[index].kernel_name, kernel_name);
 			kernel_register[index].kernel_syscall_handler = syscall_handler;
 			kernel_register[index].kernel_config_handler = config_handler;
+			kernel_register[index].is_direct = is_direct;
 			return SUCCESS;
 		}
 	}
@@ -171,6 +181,7 @@ int unregister_kernel(char* kernel_name) {
 		memset(kernel_register[kernel_index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
 		kernel_register[kernel_index].kernel_syscall_handler = NULL;
 		kernel_register[kernel_index].kernel_config_handler = NULL;
+		kernel_register[kernel_index].is_direct = -1;
 
 		// Remove all registered threads
 		for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
@@ -348,7 +359,7 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	}
 
 	// Call through the chain of kernels until someone wants to exit or pass control to host
-	while ((kernel_index >= 0) && (kernel_index != KMUX_HOST_KERNEL_INDEX)) {
+	while ((kernel_index >= 0) && !kernel_register[kernel_index].is_direct) {
         // Validate next kernel
         if (validate_kernel_index(kernel_index) < 0) {
             // TODO: For now we pass control to host for invalid kernels, maybe we should just exit
@@ -375,12 +386,15 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
     // x86_tss (x86_hw_tss) starts sizeof(struct tss_struct) words beyond tss pointer. Add 4 to reach IP
     tss_ip_location = (unsigned long *)(*cpu_x86_tss_ip_location);
 
-    if (kernel_index != KMUX_HOST_KERNEL_INDEX) {
+    if (kernel_index < 0) {
         // Update stack with error value
         regs->ax = (unsigned long)kernel_index;
+        *tss_ip_location = (unsigned long)ghost_sysenter_addr;
+    } else if(kernel_register[kernel_index].is_direct) {
+        *tss_ip_location = (unsigned long)kernel_register[kernel_index].kernel_syscall_handler;
+    } else {
+        *tss_ip_location = (unsigned long)ghost_sysenter_addr;
     }
-
-    *tss_ip_location = (unsigned long)ghost_sysenter_addr;
 
     return;
 }
@@ -606,6 +620,7 @@ static int __init kmux_init(void) {
 		memset(kernel_register[index].kernel_name, 0, MAX_KERNEL_NAME_LENGTH);
 		kernel_register[index].kernel_syscall_handler = NULL;
 		kernel_register[index].kernel_config_handler = NULL;
+		kernel_register[index].is_direct = -1;
 	}
 
 	for(index = 0; index < MAX_THREAD_SUPPORT; index++) {
@@ -624,7 +639,7 @@ static int __init kmux_init(void) {
 	printk("Current host sysenter handler: %p\n", ghost_sysenter_addr);
 
 	// Default kernel has to be at KMUX_HOST_KERNEL_INDEX
-	register_kernel(KMUX_DEFAULT_KERNEL_NAME, ghost_sysenter_addr, NULL);
+	register_kernel(KMUX_DEFAULT_KERNEL_NAME, ghost_sysenter_addr, NULL, 1);
 
 	register_kernel_cpu(KMUX_HOST_KERNEL_INDEX, KMUX_HOST_KERNEL_CPU);
 
@@ -672,3 +687,4 @@ MODULE_LICENSE("GPL");
 EXPORT_SYMBOL_GPL(register_kernel);
 EXPORT_SYMBOL_GPL(unregister_kernel);
 EXPORT_SYMBOL_GPL(get_kernel_index);
+EXPORT_SYMBOL_GPL(get_kernel_syscall_handler);

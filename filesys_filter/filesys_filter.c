@@ -23,7 +23,7 @@
 #define MAX_PATH_SUPPORT 512
 #define MAX_PATH_LENGTH MAX_KERNEL_CONFIG_BUFFER_LENGTH
 
-extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler);
+extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler, int is_direct);
 extern int unregister_kernel(char* kernel_name);
 extern int get_kernel_index(char* kernel_name);
 
@@ -399,7 +399,7 @@ static int __init filesys_filter_init(void) {
         memset(path_register[index].path, 0, MAX_PATH_LENGTH);
     }
 
-    register_kernel(MODULE_NAME, &filesys_filter_syscall_handler, &filesys_filter_config_handler);
+    register_kernel(MODULE_NAME, &filesys_filter_syscall_handler, &filesys_filter_config_handler, 0);
 	return 0;
 }
 
