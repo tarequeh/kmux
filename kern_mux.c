@@ -64,6 +64,14 @@ static int validate_kernel_index(int kernel_index) {
 	return SUCCESS;
 }
 
+kmux_kernel_syscall_handler get_kernel_syscall_handler(int kernel_index) {
+    if(validate_kernel_index(kernel_index) < 0) {
+        return NULL;
+    }
+
+    return kernel_register[kernel_index].kernel_syscall_handler;
+}
+
 static int get_cpu_binding(int kernel_index) {
     int ret_val, index;
 
@@ -679,3 +687,4 @@ MODULE_LICENSE("GPL");
 EXPORT_SYMBOL_GPL(register_kernel);
 EXPORT_SYMBOL_GPL(unregister_kernel);
 EXPORT_SYMBOL_GPL(get_kernel_index);
+EXPORT_SYMBOL_GPL(get_kernel_syscall_handler);
