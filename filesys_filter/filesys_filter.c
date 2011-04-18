@@ -201,8 +201,8 @@ static int unregister_path(int pid) {
 int filesys_filter_syscall_handler(struct pt_regs *regs) {
     int ret_val = gnext_kernel_index, syscall_number = regs->ax;
 
-    // NOTE: For proof of concept, only filter open and creat
-    if(syscall_number == __NR_open || syscall_number == __NR_creat) {
+    // NOTE: For proof of concept, only filter open, creat and unlink
+    if(syscall_number == __NR_open || syscall_number == __NR_creat || syscall_number == __NR_unlink) {
         char *normalized_path, *copied_file_path, *file_path;
         struct pid *pid;
         int pgid, normalized_path_length, index, register_index;
