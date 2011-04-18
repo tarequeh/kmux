@@ -54,20 +54,20 @@ static int find_process_register_slot(int pid) {
     return -ENOSPC;
 }
 
-static process_entry *lookup_process_entry(int pid) {
-    int index;
-    index = find_process_register_slot(pid);
+static int lookup_process_entry(int pid) {
+    int register_index;
+    register_index = find_process_register_slot(pid);
 
-    if (index < 0) {
-        return NULL;
+    if (register_index < 0) {
+        return register_index;
     }
 
-    if (process_register[index].pid == -1) {
-        // pid is not in register
-        return NULL;
+    if (process_register[register_index].pid == -1) {
+        // PID is not in register
+        return -EFAULT;
     } else {
-        // pid is in register
-        return &process_register[index];
+        // PID is in register
+        return register_index;
     }
 }
 
@@ -152,54 +152,49 @@ static int register_process(int pid, char *kernel_name, char *syscall_list) {
 }
 
 static int unregister_process(int pid) {
-    int index;
-    process_entry *process_info;
+    int index, register_index;
 
-    process_info = lookup_process_entry(pid);
-    if (!process_info) {
-        return -EINVAL;
+    register_index = lookup_process_entry(pid);
+    if (register_index < 0) {
+        return register_index;
     }
 
-    process_info->pid = -1;
-    process_info->next_kernel_index = KMUX_HOST_KERNEL_INDEX;
+    process_register[register_index].pid = -1;
+    process_register[register_index].next_kernel_index = KMUX_HOST_KERNEL_INDEX;
     for (index = 0; index < MAX_SYSCALL + 1; index++) {
-        process_info->allowed_syscalls[index] = 0;
+        process_register[register_index].allowed_syscalls[index] = 0;
     }
 
     return SUCCESS;
 }
 
 int sandbox_syscall_handler(struct pt_regs *regs) {
-    process_entry *process_info;
     struct pid *pid;
-    int pgid, syscall_number = (int)regs->ax;
-
-    if (syscall_number < 0 || syscall_number > MAX_SYSCALL) {
-        // NOTE: Highly unlikely
-        return -EINVAL;
-    }
+    int pgid, register_index, syscall_number = (int)regs->ax;
 
     pid = task_pgrp(current);
     pgid = pid->numbers[0].nr;
 
     // Look for pid record, if not found, look for tgid (if tgid not the same as pid record), then look for pgid record
-    process_info = lookup_process_entry(current->pid);
-    if (!process_info) {
+    register_index = lookup_process_entry(current->pid);
+    if (register_index < 0) {
         if (current->pid != current->tgid) {
-            process_info = lookup_process_entry(current->tgid);
+            register_index = lookup_process_entry(current->tgid);
         }
 
-        if (!process_info) {
-            process_info = lookup_process_entry(pgid);
-        }
-    }
-
-    if (process_info) {
-        if (process_info->allowed_syscalls[syscall_number]) {
-            return process_info->next_kernel_index;
+        if (register_index < 0) {
+            register_index = lookup_process_entry(pgid);
         }
     }
 
+    if (register_index) {
+        if (process_register[register_index].allowed_syscalls[syscall_number]) {
+            printk("Allowing system call: %d from PID (%d), PGID (%d)\n", syscall_number, current->pid, pgid);
+            return process_register[register_index].next_kernel_index;
+        }
+    }
+
+    printk("Blocking system call: %d from PID (%d), PGID (%d)\n", syscall_number, current->pid, pgid);
     return -EPERM;
 }
 

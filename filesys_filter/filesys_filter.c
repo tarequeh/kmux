@@ -406,12 +406,15 @@ int filesys_filter_config_handler(char *config_buffer) {
 
 /* Module initialization/ termination */
 static int __init filesys_filter_init(void) {
-    int index;
+    int index, subindex;
     printk("Installing module: %s\n", MODULE_NAME);
 
     for (index = 0; index < MAX_PATH_SUPPORT; index++) {
         path_register[index].pid = -1;
-        memset(path_register[index].path, 0, MAX_PATH_LENGTH);
+        path_register[index].count = 0;
+        for (subindex = 0; subindex < MAX_PATH_PER_PROCESS; subindex++) {
+            memset(path_register[index].path[subindex], 0, MAX_PATH_LENGTH);
+        }
     }
 
     register_kernel(MODULE_NAME, &filesys_filter_syscall_handler, &filesys_filter_config_handler);
