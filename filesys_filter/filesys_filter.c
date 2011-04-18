@@ -22,6 +22,7 @@
 
 #define MAX_PATH_SUPPORT 512
 #define MAX_PATH_LENGTH MAX_KERNEL_CONFIG_BUFFER_LENGTH
+#define MAX_PATH_PER_PROCESS 15
 
 extern int register_kernel(char* kernel_name, kmux_kernel_syscall_handler syscall_handler, kmux_kernel_config_handler config_handler);
 extern int unregister_kernel(char* kernel_name);
@@ -29,7 +30,8 @@ extern int get_kernel_index(char* kernel_name);
 
 struct path_entry {
     int pid;
-    char path[MAX_PATH_LENGTH];
+    int count;
+    char path[MAX_PATH_PER_PROCESS][MAX_PATH_LENGTH];
 };
 
 typedef struct path_entry path_entry;
@@ -127,9 +129,16 @@ static int find_path_register_slot(int pid) {
     hash_tracker = 0;
     while(hash_tracker < MAX_PATH_SUPPORT) {
         // Return index on empty or match
-        if (path_register[index].pid == -1 || path_register[index].pid == pid) {
+        if (path_register[index].pid == -1) {
             return index;
+        } else if (path_register[index].pid == pid) {
+            if (path_register[index].count == MAX_PATH_PER_PROCESS) {
+                return -ENOSPC;
+            } else {
+                return index;
+            }
         }
+
         index = (index + 1) % MAX_PATH_SUPPORT;
         hash_tracker++;
     }
@@ -137,50 +146,54 @@ static int find_path_register_slot(int pid) {
     return -ENOSPC;
 }
 
-static path_entry *lookup_path_entry(int pid) {
-    int index;
-    index = find_path_register_slot(pid);
+static int lookup_path_entry(int pid) {
+    int register_index;
+    register_index = find_path_register_slot(pid);
 
-    if (index < 0) {
-        return NULL;
+    if (register_index < 0) {
+        return register_index;
     }
 
-    if (path_register[index].pid == -1) {
+    if (path_register[register_index].pid == -1) {
         // pid is not in register
-        return NULL;
+        return -EINVAL;
     } else {
         // pid is in register
-        return &path_register[index];
+        return register_index;
     }
 }
 
 static int register_path(int pid, char *path) {
-    int index;
+    int register_index;
 
-    index = find_path_register_slot(pid);
-    if (index < 0) {
-        return index;
+    register_index = find_path_register_slot(pid);
+    if (register_index < 0) {
+        return register_index;
     }
 
-    if (path_register[index].pid == -1) {
-        path_register[index].pid = pid;
-        strcpy(path_register[index].path, path);
-        return SUCCESS;
-    } else {
-        return -EEXIST;
+    if (path_register[register_index].pid == -1) {
+        path_register[register_index].pid = pid;
     }
+
+    strcpy(path_register[register_index].path[path_register[register_index].count], path);
+    path_register[register_index].count++;
+    return SUCCESS;
+
 }
 
 static int unregister_path(int pid) {
-    path_entry *path_info;
+    int index, register_index;
 
-    path_info = lookup_path_entry(pid);
-    if (!path_info) {
-        return -EINVAL;
+    register_index = lookup_path_entry(pid);
+    if (register_index < 0) {
+        return register_index;
     }
 
-    path_info->pid = -1;
-    memset(path_info->path, 0, MAX_PATH_LENGTH);
+    path_register[register_index].pid = -1;
+    path_register[register_index].count = 0;
+    for (index = 0; index < MAX_PATH_PER_PROCESS; index++) {
+        memset(path_register[register_index].path[index], 0, MAX_PATH_LENGTH);
+    }
 
     return SUCCESS;
 }
@@ -191,9 +204,8 @@ int filesys_filter_syscall_handler(struct pt_regs *regs) {
     // NOTE: For proof of concept, only filter open and creat
     if(syscall_number == __NR_open || syscall_number == __NR_creat) {
         char *normalized_path, *copied_file_path, *file_path;
-        path_entry* path_info;
         struct pid *pid;
-        int pgid, normalized_path_length;
+        int pgid, normalized_path_length, index, register_index;
 
         file_path = (char *)regs->bx;
         copied_file_path = getname(file_path);
@@ -233,28 +245,31 @@ int filesys_filter_syscall_handler(struct pt_regs *regs) {
         pgid = pid->numbers[0].nr;
 
         // Look for pid record, if not found, look for tgid (if tgid not the same as pid record), then look for pgid record
-        path_info = lookup_path_entry(current->pid);
-        if (!path_info) {
+        register_index = lookup_path_entry(current->pid);
+        if (register_index < 0) {
             if (current->pid != current->tgid) {
-                path_info = lookup_path_entry(current->tgid);
+                register_index = lookup_path_entry(current->tgid);
             }
 
-            if (!path_info) {
-                path_info = lookup_path_entry(pgid);
+            if (register_index < 0) {
+                register_index = lookup_path_entry(pgid);
             }
         }
 
-        if (path_info) {
+        if (register_index) {
             // Check if normalized_path starts with path_info->path
-            if (strbeg(normalized_path, path_info->path)) {
-                free_page((unsigned long) normalized_path);
-                putname(copied_file_path);
-                return gnext_kernel_index;
-            } else {
-                free_page((unsigned long) normalized_path);
-                putname(copied_file_path);
-                return -EACCES;
+            for (index = 0; index < path_register[register_index].count; index++) {
+                if (strbeg(normalized_path, path_register[register_index].path[index])) {
+                    free_page((unsigned long) normalized_path);
+                    putname(copied_file_path);
+                    return gnext_kernel_index;
+                }
             }
+
+            // Could not find path
+            free_page((unsigned long) normalized_path);
+            putname(copied_file_path);
+            return -EACCES;
         } else {
             free_page((unsigned long) normalized_path);
             putname(copied_file_path);
