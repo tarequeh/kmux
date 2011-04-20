@@ -343,16 +343,9 @@ void __attribute__((regparm(1))) kmux_syscall_handler(struct pt_regs *regs) {
 	unsigned long *cpu_x86_tss, *cpu_x86_tss_ip_location;
 	unsigned long *tss_ip_location = NULL;
 
-	// Try thread registration lookup by thread pid
-	if ((kernel_index = lookup_kernel_index(current->pid)) < 0) {
-	    // Try thread registration lookup by thread group ID
-	    if ((current->pid == current->tgid) || (kernel_index = lookup_kernel_index(current->tgid)) < 0) {
-	        // Try thread registration lookup by process group ID
-	        pid = task_pgrp(current);
-	        pgid = pid->numbers[0].nr;
-	        kernel_index = lookup_kernel_index(pgid);
-	    }
-	}
+	pid = task_pgrp(current);
+	pgid = pid->numbers[0].nr;
+	kernel_index = lookup_kernel_index(pgid);
 
 	if (kernel_index < 0) {
 	    kernel_index = KMUX_HOST_KERNEL_INDEX;
