@@ -92,7 +92,7 @@ ENTRY(save_syscall_environment)
     cmpl $0, %eax
     jl exit_syscall_environment
 
-host_syscall_environment:
+direct_syscall_environment:
     # Restore TSS
     movl (%esp), %esp
 
